@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "608967087494",
+    "project_id": "sajith-rice-mill",
+    "storage_bucket": "sajith-rice-mill.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:608967087494:android:60d2e691116bfaa6cac807",
+        "android_client_info": {
+          "package_name": "com.example.lumorabiz_billing"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB7UmT71bgOtpg8oFnq80wpGIpwsEkqbp4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
