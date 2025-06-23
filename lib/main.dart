@@ -5,6 +5,7 @@ import 'package:lumorabiz_billing/addOutlet.dart';
 import 'package:lumorabiz_billing/auth/login.dart';
 import 'package:lumorabiz_billing/home/home.dart';
 import 'package:lumorabiz_billing/pages/PrintBillPage.dart';
+import 'package:lumorabiz_billing/pages/printer_select_screener.dart';
 import 'package:lumorabiz_billing/splashScreen.dart';
 
 void main() async {
@@ -36,7 +37,7 @@ class BillMasterApp extends StatelessWidget {
         '/home': (context) => const HomePage(),
         '/splash': (context) => const SplashScreen(),
         '/add-outlet': (context) => const AddOutlet(),
-        '/create-bill': (context) => Optimized4InchPrinter(),
+        '/create-bill': (context) => PrinterSelectScreener(),
       },
     );
   }
