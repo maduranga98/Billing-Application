@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:lumorabiz_billing/addOutlet.dart';
 import 'package:lumorabiz_billing/auth/login.dart';
 import 'package:lumorabiz_billing/home/home.dart';
@@ -43,26 +42,26 @@ class BillMasterApp extends StatelessWidget {
   }
 }
 
-// Auth wrapper to determine initial route based on authentication state
+// Auth wrapper to determine initial route based on session state
 class AuthWrapper extends StatelessWidget {
   const AuthWrapper({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.authStateChanges(),
+    return FutureBuilder<UserSession?>(
+      future: AuthService.getCurrentUserSession(),
       builder: (context, snapshot) {
-        // Show splash screen while checking authentication
+        // Show splash screen while checking session
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const SplashScreen();
         }
 
-        // If user is logged in, show home page
-        if (snapshot.hasData) {
+        // If user session exists, show home page
+        if (snapshot.hasData && snapshot.data != null) {
           return const HomePage();
         }
 
-        // If no user, show login page
+        // If no session, show login page
         return const LoginPage();
       },
     );
