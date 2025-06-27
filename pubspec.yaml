@@ -47,6 +47,9 @@ dependencies:
   permission_handler: ^11.3.1
   flutter_bluetooth_printer: ^2.19.0
 
+  # Security & Data
+  crypto: ^3.0.5
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
