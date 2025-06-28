@@ -12,8 +12,8 @@ class Outlet {
   final String ownerId;
   final String businessId;
   final String createdBy;
-  final String routeId; // CRITICAL: Route assignment
-  final String? routeName; // For display purposes
+  final String routeId;
+  final String? routeName;
   final bool isActive;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -31,7 +31,7 @@ class Outlet {
     required this.ownerId,
     required this.businessId,
     required this.createdBy,
-    required this.routeId, // Required field
+    this.routeId = '',
     this.routeName,
     this.isActive = true,
     required this.createdAt,
@@ -52,8 +52,8 @@ class Outlet {
       ownerId: data['ownerId'] ?? '',
       businessId: data['businessId'] ?? '',
       createdBy: data['createdBy'] ?? '',
-      routeId: data['routeId'] ?? '', // Load route assignment
-      routeName: data['routeName'], // Optional route name
+      routeId: data['routeId'] ?? '',
+      routeName: data['routeName'],
       isActive: data['isActive'] ?? true,
       createdAt: data['createdAt']?.toDate() ?? DateTime.now(),
       updatedAt: data['updatedAt']?.toDate() ?? DateTime.now(),
@@ -94,8 +94,8 @@ class Outlet {
       'ownerId': ownerId,
       'businessId': businessId,
       'createdBy': createdBy,
-      'routeId': routeId, // Include route assignment
-      'routeName': routeName, // Include route name for easy access
+      'routeId': routeId,
+      'routeName': routeName,
       'isActive': isActive,
       'createdAt': createdAt,
       'updatedAt': updatedAt,
@@ -125,17 +125,14 @@ class Outlet {
     };
   }
 
-  // Check if outlet belongs to the given route
   bool belongsToRoute(String checkRouteId) {
     return routeId == checkRouteId;
   }
 
-  // Get display text for route
   String get routeDisplayText {
     return routeName ?? 'Route: $routeId';
   }
 
-  // Create copy with updated route information
   Outlet copyWithRoute({String? newRouteId, String? newRouteName}) {
     return Outlet(
       id: id,

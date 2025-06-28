@@ -1,13 +1,18 @@
 // lib/screens/home/home_screen.dart
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:intl/intl.dart';
 import 'dart:async';
 import 'package:connectivity_plus/connectivity_plus.dart';
 
+// Providers
 import '../../providers/auth_provider.dart';
 import '../../providers/loading_provider.dart';
-import '../../widgets/common/loading_indicator.dart';
+import '../../providers/outlet_provider.dart';
+
+// Screens
+import '../outlets/outlet_list_screen.dart';
+import '../outlets/add_outlet_screen.dart';
+import '../loading/loading_list_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -17,23 +22,22 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
-  DateTime _currentDateTime = DateTime.now();
-  Timer? _timer;
-  bool _isConnected = true;
-  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
-
   late AnimationController _slideController;
   late AnimationController _scaleController;
   late Animation<Offset> _slideAnimation;
   late Animation<double> _scaleAnimation;
 
+  Timer? _timer;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+  bool _isConnected = true;
+
   @override
   void initState() {
     super.initState();
     _setupAnimations();
-    _startClock();
+    _setupTimer();
     _checkConnectivity();
-    _loadInitialData();
+    _loadData();
   }
 
   void _setupAnimations() {
@@ -41,7 +45,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       duration: const Duration(milliseconds: 800),
       vsync: this,
     );
-
     _scaleController = AnimationController(
       duration: const Duration(milliseconds: 600),
       vsync: this,
@@ -51,54 +54,154 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       begin: const Offset(0, 0.3),
       end: Offset.zero,
     ).animate(
-      CurvedAnimation(parent: _slideController, curve: Curves.easeOutCubic),
+      CurvedAnimation(parent: _slideController, curve: Curves.easeOutBack),
     );
 
     _scaleAnimation = Tween<double>(begin: 0.8, end: 1.0).animate(
-      CurvedAnimation(parent: _scaleController, curve: Curves.easeOutBack),
+      CurvedAnimation(parent: _scaleController, curve: Curves.elasticOut),
     );
 
     _slideController.forward();
-    _scaleController.forward();
+    Future.delayed(const Duration(milliseconds: 300), () {
+      _scaleController.forward();
+    });
   }
 
-  void _startClock() {
-    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+  void _setupTimer() {
+    _timer = Timer.periodic(const Duration(seconds: 30), (timer) {
       if (mounted) {
-        setState(() {
-          _currentDateTime = DateTime.now();
-        });
+        setState(() {}); // Refresh time display
       }
     });
   }
 
   Future<void> _checkConnectivity() async {
-    final connectivity = await Connectivity().checkConnectivity();
+    final connectivityResult = await Connectivity().checkConnectivity();
     setState(() {
-      _isConnected =
-          connectivity.isNotEmpty &&
-          connectivity.first != ConnectivityResult.none;
+      _isConnected = !connectivityResult.contains(ConnectivityResult.none);
     });
 
     _connectivitySubscription = Connectivity().onConnectivityChanged.listen((
-      result,
+      List<ConnectivityResult> results,
     ) {
-      if (mounted) {
-        setState(() {
-          _isConnected =
-              result.isNotEmpty && result.first != ConnectivityResult.none;
-        });
-      }
+      setState(() {
+        _isConnected = !results.contains(ConnectivityResult.none);
+      });
     });
   }
 
-  Future<void> _loadInitialData() async {
-    final authProvider = context.read<AuthProvider>();
-    final loadingProvider = context.read<LoadingProvider>();
+  Future<void> _loadData() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final loadingProvider = Provider.of<LoadingProvider>(
+      context,
+      listen: false,
+    );
+    final outletProvider = Provider.of<OutletProvider>(context, listen: false);
 
     if (authProvider.currentSession != null) {
-      // Load today's loading which will set the route context
-      await loadingProvider.loadTodaysLoading(authProvider.currentSession!);
+      await Future.wait([
+        loadingProvider.loadTodaysLoading(authProvider.currentSession!),
+        outletProvider.loadOutlets(authProvider.currentSession!),
+      ]);
+    }
+  }
+
+  Future<void> _refreshData() async {
+    await _loadData();
+  }
+
+  void _navigateToProfile() {
+    // TODO: Implement profile navigation
+  }
+
+  void _navigateToSettings() {
+    // TODO: Implement settings navigation
+  }
+
+  Future<void> _signOut() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    await authProvider.logout();
+  }
+
+  Future<void> _syncOfflineData() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final outletProvider = Provider.of<OutletProvider>(context, listen: false);
+
+    if (authProvider.currentSession != null) {
+      // Show loading dialog
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder:
+            (context) => const Dialog(
+              child: Padding(
+                padding: EdgeInsets.all(20),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(),
+                    SizedBox(width: 20),
+                    Text('Syncing data...'),
+                  ],
+                ),
+              ),
+            ),
+      );
+
+      try {
+        final result = await outletProvider.syncOfflineOutlets(
+          authProvider.currentSession!,
+        );
+
+        if (mounted) {
+          Navigator.of(context).pop(); // Close loading dialog
+
+          if (result != null) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Row(
+                  children: [
+                    Icon(
+                      result.success ? Icons.check_circle : Icons.warning,
+                      color: Colors.white,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(child: Text(result.message)),
+                  ],
+                ),
+                backgroundColor: result.success ? Colors.green : Colors.orange,
+                behavior: SnackBarBehavior.floating,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                margin: const EdgeInsets.all(16),
+              ),
+            );
+          }
+        }
+      } catch (e) {
+        if (mounted) {
+          Navigator.of(context).pop(); // Close loading dialog
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.error, color: Colors.white),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text('Sync failed: $e')),
+                ],
+              ),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              margin: const EdgeInsets.all(16),
+            ),
+          );
+        }
+      }
     }
   }
 
@@ -134,14 +237,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   const SizedBox(height: 24),
                   _buildDateTimeCard(),
                   const SizedBox(height: 24),
-                  _buildLoadingOverview(),
+                  _buildQuickStats(),
                   const SizedBox(height: 24),
                   _buildQuickActions(),
                   const SizedBox(height: 24),
-                  _buildTodaysSummary(),
+                  _buildLoadingOverview(),
                   const SizedBox(height: 24),
-                  _buildItemsNeedingAttention(),
-                  const SizedBox(height: 100), // Bottom padding
+                  _buildOutletOverview(),
+                  const SizedBox(height: 24),
+                  _buildTodaysSummary(),
+                  const SizedBox(height: 100),
                 ],
               ),
             ),
@@ -327,123 +432,42 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     child: Icon(
                       loadingProvider.hasRouteContext
                           ? Icons.route
-                          : Icons.route_outlined,
+                          : Icons.location_off,
                       color: Colors.white,
                       size: 24,
                     ),
                   ),
                   const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Today\'s Route',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.9),
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          loadingProvider.hasRouteContext
-                              ? loadingProvider.routeDisplayName
-                              : 'No Route Assigned',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 22,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
+                  const Expanded(
+                    child: Text(
+                      'Today\'s Route',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                 ],
               ),
-
-              if (loadingProvider.hasRouteContext) ...[
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Coverage Areas:',
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.9),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        loadingProvider.routeAreasText,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
+              const SizedBox(height: 16),
+              Text(
+                loadingProvider.hasRouteContext
+                    ? loadingProvider.routeDisplayName
+                    : 'No Route Assigned',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w700,
                 ),
-
-                if (loadingProvider.hasLoading) ...[
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      _buildRouteStatItem(
-                        'Items',
-                        loadingProvider.availableItemCount.toString(),
-                        Icons.inventory_2,
-                      ),
-                      const SizedBox(width: 24),
-                      _buildRouteStatItem(
-                        'Bags',
-                        loadingProvider.totalBags.toString(),
-                        Icons.shopping_bag,
-                      ),
-                      const SizedBox(width: 24),
-                      _buildRouteStatItem(
-                        'Weight',
-                        '${loadingProvider.totalWeight.toStringAsFixed(0)}kg',
-                        Icons.scale,
-                      ),
-                    ],
-                  ),
-                ],
-              ] else ...[
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.info_outline,
-                        color: Colors.white.withOpacity(0.9),
-                        size: 16,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Contact your supervisor to get today\'s loading assignment',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.9),
-                            fontSize: 14,
-                          ),
-                        ),
-                      ),
-                    ],
+              ),
+              if (loadingProvider.hasRouteContext) ...[
+                const SizedBox(height: 8),
+                Text(
+                  loadingProvider.routeAreasText,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.9),
+                    fontSize: 14,
                   ),
                 ),
               ],
@@ -451,83 +475,54 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ),
         );
       },
-    );
-  }
-
-  Widget _buildRouteStatItem(String label, String value, IconData icon) {
-    return Column(
-      children: [
-        Icon(icon, color: Colors.white.withOpacity(0.9), size: 20),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        Text(
-          label,
-          style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 10),
-        ),
-      ],
     );
   }
 
   Widget _buildDateTimeCard() {
+    final now = DateTime.now();
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Colors.blue.shade600, Colors.blue.shade700],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(20),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.blue.shade200.withOpacity(0.5),
-            blurRadius: 20,
-            offset: const Offset(0, 10),
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Row(
-            children: [
-              const Icon(Icons.access_time, color: Colors.white70, size: 20),
-              const SizedBox(width: 8),
-              Text(
-                'Current Time',
-                style: TextStyle(
-                  color: Colors.white70,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Text(
-            DateFormat('EEEE, MMMM dd').format(_currentDateTime),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.blue.shade50,
+              borderRadius: BorderRadius.circular(12),
             ),
+            child: Icon(Icons.today, color: Colors.blue.shade600, size: 24),
           ),
-          const SizedBox(height: 4),
-          Text(
-            DateFormat('HH:mm:ss').format(_currentDateTime),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 32,
-              fontWeight: FontWeight.w700,
-              letterSpacing: -1,
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${now.day}/${now.month}/${now.year}',
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF1A1A1A),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _getFormattedTime(now),
+                  style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+                ),
+              ],
             ),
           ),
         ],
@@ -535,199 +530,78 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildLoadingOverview() {
-    return Consumer<LoadingProvider>(
-      builder: (context, loadingProvider, child) {
-        return Card(
-          elevation: 2,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Today\'s Loading',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey.shade800,
-                      ),
-                    ),
-                    if (loadingProvider.hasLoading)
-                      TextButton.icon(
-                        onPressed:
-                            () => Navigator.pushNamed(context, '/loading'),
-                        icon: const Icon(Icons.arrow_forward, size: 16),
-                        label: const Text('View Details'),
-                        style: TextButton.styleFrom(
-                          foregroundColor: Colors.blue.shade600,
-                        ),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-
-                if (loadingProvider.isLoading)
-                  const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(20),
-                      child: CompactLoadingIndicator(),
-                    ),
-                  )
-                else if (loadingProvider.hasError)
-                  CompactErrorWidget(
-                    message: loadingProvider.errorMessage,
-                    onRetry:
-                        () => loadingProvider.clearErrorAndRetry(
-                          context.read<AuthProvider>().currentSession!,
-                        ),
-                  )
-                else if (loadingProvider.hasNoLoading)
-                  _buildNoLoadingState()
-                else if (loadingProvider.hasLoading)
-                  _buildLoadingStats(loadingProvider)
-                else
-                  _buildNoLoadingState(),
-              ],
+  Widget _buildQuickStats() {
+    return Consumer2<LoadingProvider, OutletProvider>(
+      builder: (context, loadingProvider, outletProvider, child) {
+        return Row(
+          children: [
+            Expanded(
+              child: _buildStatCard(
+                'Loading Items',
+                '${loadingProvider.availableItemCount}',
+                Icons.inventory_2,
+                Colors.blue,
+              ),
             ),
-          ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildStatCard(
+                'Total Outlets',
+                '${outletProvider.outlets.length}',
+                Icons.store,
+                Colors.green,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildStatCard(
+                'Offline Data',
+                '${outletProvider.offlineOutletCount}',
+                Icons.cloud_off,
+                Colors.orange,
+              ),
+            ),
+          ],
         );
       },
     );
   }
 
-  Widget _buildLoadingStats(LoadingProvider loadingProvider) {
-    return Column(
-      children: [
-        IntrinsicHeight(
-          child: Row(
-            children: [
-              Expanded(
-                child: _buildLoadingStatItem(
-                  'Total Items',
-                  loadingProvider.totalItems.toString(),
-                  Icons.inventory_2_outlined,
-                  Colors.blue,
-                ),
-              ),
-              VerticalDivider(color: Colors.grey.shade300),
-              Expanded(
-                child: _buildLoadingStatItem(
-                  'Available',
-                  loadingProvider.availableItemCount.toString(),
-                  Icons.check_circle_outline,
-                  Colors.green,
-                ),
-              ),
-              VerticalDivider(color: Colors.grey.shade300),
-              Expanded(
-                child: _buildLoadingStatItem(
-                  'Value',
-                  'Rs ${_formatCurrency(loadingProvider.totalValue)}',
-                  Icons.attach_money,
-                  Colors.orange,
-                ),
-              ),
-            ],
-          ),
-        ),
-
-        // Sales Progress
-        if (loadingProvider.salesProgress > 0) ...[
-          const SizedBox(height: 16),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Sales Progress',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.grey.shade700,
-                    ),
-                  ),
-                  Text(
-                    '${loadingProvider.salesProgress.toStringAsFixed(1)}%',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.blue.shade600,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              LinearProgressIndicator(
-                value: loadingProvider.salesProgress / 100,
-                backgroundColor: Colors.grey.shade200,
-                valueColor: AlwaysStoppedAnimation<Color>(Colors.blue.shade600),
-              ),
-            ],
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildLoadingStatItem(
-    String label,
+  Widget _buildStatCard(
+    String title,
     String value,
     IconData icon,
     Color color,
   ) {
-    return Column(
-      children: [
-        Icon(icon, color: color, size: 24),
-        const SizedBox(height: 8),
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
-            color: Colors.grey.shade800,
-          ),
-          textAlign: TextAlign.center,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        const SizedBox(height: 4),
-        Text(
-          label,
-          style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-          textAlign: TextAlign.center,
-        ),
-      ],
-    );
-  }
-
-  Widget _buildNoLoadingState() {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
       child: Column(
         children: [
-          Icon(Icons.inbox_outlined, size: 48, color: Colors.grey.shade400),
-          const SizedBox(height: 12),
-          Text(
-            'No Loading Assigned',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey.shade600,
-            ),
-          ),
+          Icon(icon, color: color, size: 24),
           const SizedBox(height: 8),
           Text(
-            'Contact your supervisor to get today\'s loading assignment.',
-            style: TextStyle(fontSize: 14, color: Colors.grey.shade500),
+            value,
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            title,
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
             textAlign: TextAlign.center,
           ),
         ],
@@ -770,7 +644,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   'Register new outlet',
                   Icons.store_outlined,
                   Colors.green,
-                  () => Navigator.pushNamed(context, '/add-outlet'),
+                  () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const AddOutletScreen(),
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -787,17 +666,27 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   'Check inventory',
                   Icons.inventory_2_outlined,
                   Colors.orange,
-                  () => Navigator.pushNamed(context, '/loading'),
+                  () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const LoadingListScreen(),
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: _buildActionCard(
-                  'Reports',
-                  'View analytics',
-                  Icons.analytics_outlined,
+                  'Manage Outlets',
+                  'View all outlets',
+                  Icons.store,
                   Colors.purple,
-                  () => Navigator.pushNamed(context, '/reports'),
+                  () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const OutletListScreen(),
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -854,140 +743,385 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildTodaysSummary() {
-    // Mock data - replace with real data from providers
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Today\'s Summary',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade800,
+  Widget _buildLoadingOverview() {
+    return Consumer<LoadingProvider>(
+      builder: (context, loadingProvider, child) {
+        if (loadingProvider.loadingState == LoadingState.loading) {
+          return _buildLoadingCard(isLoading: true);
+        }
+
+        if (loadingProvider.loadingState == LoadingState.noLoading) {
+          return _buildLoadingCard(isEmpty: true);
+        }
+
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.04),
+                blurRadius: 10,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.inventory_2_outlined,
+                    color: Colors.orange.shade600,
+                    size: 24,
                   ),
-                ),
-                Text(
-                  DateFormat('MMM dd').format(DateTime.now()),
-                  style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            IntrinsicHeight(
-              child: Row(
+                  const SizedBox(width: 12),
+                  Text(
+                    'Today\'s Loading',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey.shade800,
+                    ),
+                  ),
+                  const Spacer(),
+                  TextButton(
+                    onPressed:
+                        () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const LoadingListScreen(),
+                          ),
+                        ),
+                    child: const Text('View All'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
                 children: [
                   Expanded(
-                    child: _buildLoadingStatItem(
-                      'Bills Created',
-                      '0', // TODO: Replace with real data
-                      Icons.receipt,
+                    child: _buildLoadingStat(
+                      'Total Items',
+                      '${loadingProvider.availableItemCount}',
                       Colors.blue,
                     ),
                   ),
-                  VerticalDivider(color: Colors.grey.shade300),
                   Expanded(
-                    child: _buildLoadingStatItem(
-                      'Revenue',
-                      'Rs 0', // TODO: Replace with real data
-                      Icons.trending_up,
-                      Colors.green,
+                    child: _buildLoadingStat(
+                      'Low Stock',
+                      '${loadingProvider.lowStockCount}',
+                      Colors.orange,
                     ),
                   ),
-                  VerticalDivider(color: Colors.grey.shade300),
                   Expanded(
-                    child: _buildLoadingStatItem(
-                      'Outlets',
-                      '0', // TODO: Replace with real data
-                      Icons.store,
-                      Colors.teal,
+                    child: _buildLoadingStat(
+                      'Out of Stock',
+                      '${loadingProvider.outOfStockCount}',
+                      Colors.red,
                     ),
                   ),
                 ],
               ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildItemsNeedingAttention() {
-    // Remove this section since daily loadings don't need low stock alerts
-    return const SizedBox.shrink();
-  }
-
-  Widget _buildFloatingActionButton() {
-    return Consumer<LoadingProvider>(
-      builder: (context, loadingProvider, child) {
-        return FloatingActionButton.extended(
-          onPressed:
-              loadingProvider.hasRouteContext
-                  ? () => Navigator.pushNamed(context, '/create-bill')
-                  : null,
-          backgroundColor:
-              loadingProvider.hasRouteContext
-                  ? Colors.blue.shade600
-                  : Colors.grey.shade400,
-          foregroundColor: Colors.white,
-          icon: const Icon(Icons.add),
-          label: const Text(
-            'New Bill',
-            style: TextStyle(fontWeight: FontWeight.w600),
+            ],
           ),
         );
       },
     );
   }
 
-  // Helper methods
-  String _formatCurrency(double amount) {
-    return NumberFormat('#,##0').format(amount);
-  }
-
-  Future<void> _refreshData() async {
-    final authProvider = context.read<AuthProvider>();
-    final loadingProvider = context.read<LoadingProvider>();
-
-    if (authProvider.currentSession != null) {
-      await loadingProvider.refreshLoading(authProvider.currentSession!);
-    }
-  }
-
-  void _signOut() async {
-    final authProvider = context.read<AuthProvider>();
-    await authProvider.logout();
-
-    if (mounted) {
-      Navigator.pushReplacementNamed(context, '/login');
-    }
-  }
-
-  void _navigateToProfile() {
-    // TODO: Navigate to profile screen
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Profile screen coming soon!'),
-        behavior: SnackBarBehavior.floating,
+  Widget _buildLoadingCard({bool isLoading = false, bool isEmpty = false}) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Icon(
+            isLoading ? Icons.hourglass_empty : Icons.inventory_2_outlined,
+            size: 48,
+            color: Colors.grey.shade400,
+          ),
+          const SizedBox(height: 16),
+          Text(
+            isLoading ? 'Loading data...' : 'No loading data available',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w500,
+              color: Colors.grey.shade600,
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  void _navigateToSettings() {
-    // TODO: Navigate to settings screen
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Settings screen coming soon!'),
-        behavior: SnackBarBehavior.floating,
+  Widget _buildLoadingStat(String label, String value, Color color) {
+    return Column(
+      children: [
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 24,
+            fontWeight: FontWeight.w700,
+            color: color,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+          textAlign: TextAlign.center,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildOutletOverview() {
+    return Consumer<OutletProvider>(
+      builder: (context, outletProvider, child) {
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.04),
+                blurRadius: 10,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.store_outlined,
+                    color: Colors.green.shade600,
+                    size: 24,
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    'Outlet Management',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey.shade800,
+                    ),
+                  ),
+                  const Spacer(),
+                  TextButton(
+                    onPressed:
+                        () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const OutletListScreen(),
+                          ),
+                        ),
+                    child: const Text('Manage'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildOutletStat(
+                      'Total Outlets',
+                      '${outletProvider.outlets.length}',
+                      Colors.green,
+                    ),
+                  ),
+                  Expanded(
+                    child: _buildOutletStat(
+                      'Offline Data',
+                      '${outletProvider.offlineOutletCount}',
+                      Colors.orange,
+                    ),
+                  ),
+                  Expanded(
+                    child: _buildOutletStat(
+                      'Connection',
+                      _isConnected ? 'Online' : 'Offline',
+                      _isConnected ? Colors.green : Colors.red,
+                    ),
+                  ),
+                ],
+              ),
+              if (outletProvider.offlineOutletCount > 0 && _isConnected) ...[
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () => _syncOfflineData(),
+                    icon: const Icon(Icons.sync, size: 18),
+                    label: Text(
+                      'Sync ${outletProvider.offlineOutletCount} outlets',
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orange[600],
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildOutletStat(String label, String value, Color color) {
+    return Column(
+      children: [
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+            color: color,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+          textAlign: TextAlign.center,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTodaysSummary() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.analytics_outlined,
+                color: Colors.purple.shade600,
+                size: 24,
+              ),
+              const SizedBox(width: 12),
+              Text(
+                'Today\'s Summary',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey.shade800,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: _buildSummaryItem('Bills Created', '0', Colors.blue),
+              ),
+              Expanded(
+                child: _buildSummaryItem(
+                  'Total Revenue',
+                  'Rs. 0',
+                  Colors.green,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _buildSummaryItem('Cash Sales', 'Rs. 0', Colors.orange),
+              ),
+              Expanded(
+                child: _buildSummaryItem('Credit Sales', 'Rs. 0', Colors.red),
+              ),
+            ],
+          ),
+        ],
       ),
     );
+  }
+
+  Widget _buildSummaryItem(String label, String value, Color color) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: color,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFloatingActionButton() {
+    return FloatingActionButton(
+      onPressed:
+          () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const AddOutletScreen()),
+          ),
+      backgroundColor: Colors.green.shade600,
+      foregroundColor: Colors.white,
+      elevation: 8,
+      child: const Icon(Icons.add, size: 28),
+    );
+  }
+
+  // Helper Methods
+  String _getFormattedTime(DateTime time) {
+    final hour = time.hour;
+    final minute = time.minute.toString().padLeft(2, '0');
+    final period = hour >= 12 ? 'PM' : 'AM';
+    final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
+    return '$displayHour:$minute $period';
   }
 }
