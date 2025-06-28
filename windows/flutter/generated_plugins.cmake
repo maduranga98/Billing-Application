@@ -9,8 +9,10 @@ list(APPEND FLUTTER_PLUGIN_LIST
   firebase_auth
   firebase_core
   firebase_storage
+  geolocator_windows
   permission_handler_windows
   print_bluetooth_thermal
+  printing
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST
