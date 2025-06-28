@@ -46,16 +46,21 @@ class LoadingProvider with ChangeNotifier {
       _loadingState == LoadingState.loaded && _currentLoading != null;
   bool get hasNoLoading => _loadingState == LoadingState.noLoading;
 
-  // Statistics
+  // Statistics (updated for real data structure)
   int get totalItems => _currentLoading?.itemCount ?? 0;
-  double get totalValue =>
-      _availableItems.fold(0.0, (sum, item) => sum + item.totalValue);
-  double get totalLoadedValue => _currentLoading?.totalValue ?? 0.0;
+  int get totalBags => _currentLoading?.totalBags ?? 0;
+  double get totalValue => _currentLoading?.totalValue ?? 0.0;
+  double get totalWeight => _currentLoading?.totalWeight ?? 0.0;
   int get availableItemCount => _availableItems.length;
-  int get lowStockCount =>
-      _availableItems.where((item) => item.isLowStock).length;
-  int get outOfStockCount =>
-      _currentLoading?.items.where((item) => item.isOutOfStock).length ?? 0;
+
+  // No low stock or out of stock concepts for daily loading
+  int get lowStockCount => 0;
+  int get outOfStockCount => 0;
+  bool get hasItemsNeedingAttention =>
+      false; // No alerts needed for daily loading
+
+  // Sales progress (0% since no sold tracking in current structure)
+  double get salesProgress => 0.0;
 
   // Route display information
   String get routeDisplayName => _currentRouteName ?? 'Unknown Route';
@@ -63,110 +68,110 @@ class LoadingProvider with ChangeNotifier {
       _currentRouteAreas.isNotEmpty
           ? _currentRouteAreas.join(', ')
           : 'No areas defined';
-
   String get routeFullDisplayText =>
       hasRouteContext
-          ? '$routeDisplayName (${routeAreasText})'
-          : 'No route assigned';
+          ? '$routeDisplayName ($routeAreasText)'
+          : 'No Route Assigned';
 
-  // Load today's loading and extract route context
+  // Get items by category (product type)
+  Map<String, List<LoadingItem>> get itemsByCategory {
+    final Map<String, List<LoadingItem>> categorizedItems = {};
+
+    for (final item in _availableItems) {
+      final category = item.category.isEmpty ? 'Uncategorized' : item.category;
+      if (!categorizedItems.containsKey(category)) {
+        categorizedItems[category] = [];
+      }
+      categorizedItems[category]!.add(item);
+    }
+
+    return categorizedItems;
+  }
+
+  // Get all categories
+  List<String> get categories {
+    return itemsByCategory.keys.toList()..sort();
+  }
+
+  // Get low stock items (empty for daily loading)
+  List<LoadingItem> get lowStockItems {
+    return [];
+  }
+
+  // Get out of stock items (empty for daily loading)
+  List<LoadingItem> get outOfStockItems {
+    return [];
+  }
+
+  // Get item status color (simplified for daily loading)
+  Color getItemStatusColor(LoadingItem item) {
+    return Colors.green.shade600; // All items are available
+  }
+
+  // Get item status text (simplified for daily loading)
+  String getItemStatusText(LoadingItem item) {
+    return 'Available';
+  }
+
+  // Load today's loading for the sales rep
   Future<void> loadTodaysLoading(UserSession session) async {
     _loadingState = LoadingState.loading;
     _errorMessage = '';
     notifyListeners();
 
     try {
-      _currentLoading = await LoadingService.getTodaysLoading(session);
+      print(
+        'LoadingProvider: Loading today\'s loading for ${session.employeeId}',
+      );
 
-      if (_currentLoading != null) {
-        _availableItems = _currentLoading!.availableItems;
-        _loadingState = LoadingState.loaded;
+      final loading = await LoadingService.getTodaysLoading(session);
+
+      if (loading != null) {
+        _currentLoading = loading;
+        _availableItems = loading.availableItems;
         _lastUpdateTime = DateTime.now();
+        _loadingState = LoadingState.loaded;
 
-        // Extract route context from loading
-        await _extractRouteContext(_currentLoading!, session);
+        // Update route context
+        _updateRouteContext(loading);
+
+        print(
+          'LoadingProvider: Loading loaded successfully with ${loading.items.length} items',
+        );
       } else {
+        _currentLoading = null;
         _availableItems = [];
         _loadingState = LoadingState.noLoading;
         _clearRouteContext();
-      }
 
-      _errorMessage = '';
+        print('LoadingProvider: No loading found');
+      }
     } catch (e) {
       _loadingState = LoadingState.error;
       _errorMessage = e.toString();
       _clearRouteContext();
-      print('Error loading today\'s loading: $e');
+
+      print('LoadingProvider: Error loading: $e');
     }
 
     notifyListeners();
   }
 
-  // Extract and update route context from loading
-  Future<void> _extractRouteContext(
-    Loading loading,
-    UserSession session,
-  ) async {
+  // Update route context from loading
+  void _updateRouteContext(Loading loading) {
     try {
       _currentRouteId = loading.routeId;
+      _currentRouteName = loading.todayRoute?.name ?? loading.routeDisplayName;
+      _currentRouteAreas = loading.routeAreas;
 
-      if (loading.todayRoute != null) {
-        // Route info is already loaded in loading
-        _currentRouteName = loading.todayRoute!.name;
-        _currentRouteAreas = loading.todayRoute!.areas;
-      } else if (loading.routeId.isNotEmpty) {
-        // Load route info separately
-        final routeInfo = await LoadingService.getRouteInfo(
-          session,
-          loading.routeId,
-        );
-        if (routeInfo != null) {
-          _currentRouteName = routeInfo.name;
-          _currentRouteAreas = routeInfo.areas;
-        }
-      }
-
-      // Update user session with route context
-      await _updateSessionWithRouteContext(session);
-    } catch (e) {
-      print('Error extracting route context: $e');
-      _clearRouteContext();
-    }
-  }
-
-  Color getItemStatusColor(LoadingItem item) {
-    if (item.isOutOfStock) {
-      return Colors.red.shade600;
-    } else if (item.isLowStock) {
-      return Colors.orange.shade600;
-    } else {
-      return Colors.green.shade600;
-    }
-  }
-
-  // Get item status text
-  String getItemStatusText(LoadingItem item) {
-    if (item.isOutOfStock) {
-      return 'Out of Stock';
-    } else if (item.isLowStock) {
-      return 'Low Stock';
-    } else {
-      return 'Available';
-    }
-  }
-
-  // Update user session with current route context
-  Future<void> _updateSessionWithRouteContext(UserSession session) async {
-    if (!hasRouteContext) return;
-
-    try {
-      await AuthService.updateSessionWithRoute(
-        routeId: _currentRouteId!,
-        routeName: _currentRouteName ?? '',
+      // Update session with route context if needed
+      AuthService.updateSessionWithRoute(
+        routeId: _currentRouteId ?? '',
+        routeName: _currentRouteName,
         routeAreas: _currentRouteAreas,
       );
     } catch (e) {
-      print('Error updating session with route context: $e');
+      print('Error updating route context: $e');
     }
   }
 
@@ -206,64 +211,10 @@ class LoadingProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  // Update sold quantities (when creating bills)
-  Future<bool> updateSoldQuantities({
-    required UserSession session,
-    required Map<String, int> itemQuantities, // productId -> quantity sold
-  }) async {
-    if (_currentLoading == null) return false;
-
-    try {
-      final success = await LoadingService.updateSoldQuantities(
-        session: session,
-        loadingId: _currentLoading!.loadingId,
-        itemQuantities: itemQuantities,
-      );
-
-      if (success) {
-        // Update local state
-        final updatedItems = <LoadingItem>[];
-
-        for (final item in _currentLoading!.items) {
-          if (itemQuantities.containsKey(item.productId)) {
-            final soldQuantity = itemQuantities[item.productId]!;
-            updatedItems.add(item.copyWithSoldQuantity(soldQuantity));
-          } else {
-            updatedItems.add(item);
-          }
-        }
-
-        // Update current loading with new items
-        _currentLoading = Loading(
-          loadingId: _currentLoading!.loadingId,
-          businessId: _currentLoading!.businessId,
-          ownerId: _currentLoading!.ownerId,
-          routeId: _currentLoading!.routeId,
-          salesRepId: _currentLoading!.salesRepId,
-          salesRepName: _currentLoading!.salesRepName,
-          salesRepEmail: _currentLoading!.salesRepEmail,
-          salesRepPhone: _currentLoading!.salesRepPhone,
-          status: _currentLoading!.status,
-          itemCount: _currentLoading!.itemCount,
-          totalBags: _currentLoading!.totalBags,
-          totalValue: _currentLoading!.totalValue,
-          items: updatedItems,
-          todayRoute: _currentLoading!.todayRoute,
-          createdAt: _currentLoading!.createdAt,
-          createdBy: _currentLoading!.createdBy,
-        );
-
-        // Update available items
-        _availableItems = _currentLoading!.availableItems;
-
-        notifyListeners();
-      }
-
-      return success;
-    } catch (e) {
-      print('Error updating sold quantities: $e');
-      return false;
-    }
+  // Clear error and retry loading
+  Future<void> clearErrorAndRetry(UserSession session) async {
+    _errorMessage = '';
+    await loadTodaysLoading(session);
   }
 
   // Get item by product ID
@@ -279,61 +230,10 @@ class LoadingProvider with ChangeNotifier {
     }
   }
 
-  // Check if sufficient quantity is available
-  bool hasSufficientQuantity(String productId, int requiredQuantity) {
+  // Check if sufficient quantity is available (updated for bag-based system)
+  bool hasSufficientQuantity(String productId, int requiredBags) {
     final item = getItemByProductId(productId);
-    return item != null && item.availableQuantity >= requiredQuantity;
-  }
-
-  // Get items by category
-  Map<String, List<LoadingItem>> get itemsByCategory {
-    final Map<String, List<LoadingItem>> categorizedItems = {};
-
-    for (final item in _availableItems) {
-      final category = item.category.isEmpty ? 'Uncategorized' : item.category;
-      if (!categorizedItems.containsKey(category)) {
-        categorizedItems[category] = [];
-      }
-      categorizedItems[category]!.add(item);
-    }
-
-    return categorizedItems;
-  }
-
-  // Get all categories
-  List<String> get categories {
-    return itemsByCategory.keys.toList()..sort();
-  }
-
-  // Get low stock items
-  List<LoadingItem> get lowStockItems {
-    return _availableItems.where((item) => item.isLowStock).toList();
-  }
-
-  // Get out of stock items
-  List<LoadingItem> get outOfStockItems {
-    return _currentLoading?.items.where((item) => item.isOutOfStock).toList() ??
-        [];
-  }
-
-  // Validate items before bill creation
-  Future<Map<String, dynamic>> validateItemsForBill({
-    required UserSession session,
-    required Map<String, int> itemQuantities, // productId -> required quantity
-  }) async {
-    try {
-      return await LoadingService.validateItemsForBill(
-        session: session,
-        itemQuantities: itemQuantities,
-      );
-    } catch (e) {
-      return {
-        'isValid': false,
-        'error': e.toString(),
-        'insufficientItems': [],
-        'unavailableItems': [],
-      };
-    }
+    return item != null && item.availableQuantity >= requiredBags;
   }
 
   // Get loading statistics with route context
@@ -342,9 +242,10 @@ class LoadingProvider with ChangeNotifier {
       return {
         'hasLoading': false,
         'totalItems': 0,
+        'totalBags': 0,
         'totalValue': 0.0,
+        'totalWeight': 0.0,
         'availableItems': 0,
-        'soldItems': 0,
         'routeName': 'No Loading',
         'routeId': null,
         'routeAreas': <String>[],
@@ -352,18 +253,13 @@ class LoadingProvider with ChangeNotifier {
       };
     }
 
-    final soldItems =
-        _currentLoading!.items.where((item) => item.soldQuantity > 0).length;
-
     return {
       'hasLoading': true,
       'totalItems': totalItems,
+      'totalBags': totalBags,
       'totalValue': totalValue,
-      'totalLoadedValue': totalLoadedValue,
+      'totalWeight': totalWeight,
       'availableItems': availableItemCount,
-      'soldItems': soldItems,
-      'lowStockCount': lowStockCount,
-      'outOfStockCount': outOfStockCount,
       'routeName': routeDisplayName,
       'routeId': _currentRouteId,
       'routeAreas': _currentRouteAreas,
@@ -371,17 +267,6 @@ class LoadingProvider with ChangeNotifier {
       'routeFullDisplay': routeFullDisplayText,
       'status': _currentLoading!.status,
     };
-  }
-
-  // Get sales progress (percentage of items sold)
-  double get salesProgress {
-    if (_currentLoading == null || _currentLoading!.totalValue == 0) return 0.0;
-
-    final totalSoldValue = _currentLoading!.items.fold(0.0, (sum, item) {
-      return sum + (item.soldQuantity * item.unitPrice);
-    });
-
-    return (totalSoldValue / _currentLoading!.totalValue) * 100;
   }
 
   // Check if loading is ready for sales
@@ -395,7 +280,7 @@ class LoadingProvider with ChangeNotifier {
       return 'No loading assigned for today';
     }
 
-    return '$availableItemCount items • $routeDisplayName';
+    return '$availableItemCount items • $totalBags bags • $routeDisplayName';
   }
 
   // Get route context for other operations
@@ -406,6 +291,8 @@ class LoadingProvider with ChangeNotifier {
       'routeId': _currentRouteId,
       'routeName': _currentRouteName,
       'routeAreas': _currentRouteAreas,
+      'routeAreasText': routeAreasText,
+      'routeFullDisplay': routeFullDisplayText,
     };
   }
 
@@ -422,23 +309,8 @@ class LoadingProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  // Clear error and retry
-  void clearErrorAndRetry(UserSession session) {
-    _errorMessage = '';
-    loadTodaysLoading(session);
-  }
-
-  // Check if items need attention (low stock or out of stock)
-  bool get hasItemsNeedingAttention {
-    return lowStockCount > 0 || outOfStockCount > 0;
-  }
-
-  // Get items needing attention
-  List<LoadingItem> get itemsNeedingAttention {
-    if (_currentLoading == null) return [];
-
-    return _currentLoading!.items
-        .where((item) => item.isLowStock || item.isOutOfStock)
-        .toList();
+  // Force notification (for debugging)
+  void forceNotify() {
+    notifyListeners();
   }
 }

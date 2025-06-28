@@ -127,6 +127,7 @@ class LumoraBizApp extends StatelessWidget {
           // Legacy routes (update these later)
           '/add-outlet': (context) => const AddOutlet(),
           '/create-bill': (context) => PrinterSelectScreener(),
+          '/loading': (context) => LoadingListScreen(),
 
           // TODO: Add these routes when screens are created
           // '/outlets': (context) => const OutletListScreen(),

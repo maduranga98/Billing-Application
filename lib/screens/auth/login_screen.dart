@@ -1,8 +1,9 @@
 // lib/screens/auth/login_screen.dart
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import '../../providers/auth_provider.dart';
 import '../../services/auth/auth_service.dart';
-import '../../models/user_session.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -70,23 +71,21 @@ class _LoginScreenState extends State<LoginScreen>
     });
 
     Connectivity().onConnectivityChanged.listen((result) {
-      setState(() {
-        _isOnline =
-            result.isNotEmpty && result.first != ConnectivityResult.none;
-      });
+      if (mounted) {
+        setState(() {
+          _isOnline =
+              result.isNotEmpty && result.first != ConnectivityResult.none;
+        });
+      }
     });
   }
 
   Future<void> _checkExistingSession() async {
-    final session = await AuthService.getCurrentUserSession();
-    if (session != null && mounted) {
-      // Validate session before auto-login
-      if (AuthService.isSessionValid(session)) {
-        Navigator.pushReplacementNamed(context, '/home');
-      } else {
-        // Session expired, clear it
-        await AuthService.clearSession();
-      }
+    final authProvider = context.read<AuthProvider>();
+    await authProvider.initializeAuth();
+
+    if (authProvider.isAuthenticated && mounted) {
+      Navigator.pushReplacementNamed(context, '/home');
     }
   }
 
@@ -101,55 +100,55 @@ class _LoginScreenState extends State<LoginScreen>
     try {
       final username = _usernameController.text.trim();
       final password = _passwordController.text;
+      final authProvider = context.read<AuthProvider>();
 
-      UserSession? session;
+      bool loginSuccess = false;
 
       if (_isOnline) {
         // Try online authentication first
         try {
-          session = await AuthService.authenticateOnline(username, password);
+          loginSuccess = await authProvider.loginOnline(username, password);
 
-          // Save offline credentials if remember me is checked
-          if (_rememberMe) {
+          // Save offline credentials if remember me is checked and login successful
+          if (loginSuccess &&
+              _rememberMe &&
+              authProvider.currentSession != null) {
             await AuthService.saveOfflineCredentials(
               username,
               password,
-              session!,
+              authProvider.currentSession!,
             );
           }
 
-          _showSnackBar('Login successful!', Colors.green);
+          if (loginSuccess) {
+            _showSnackBar('Login successful! Loading data...', Colors.green);
+          }
         } catch (e) {
           // If online fails, try offline as backup
-          session = await AuthService.verifyOfflineCredentials(
-            username,
-            password,
-          );
-          if (session == null) {
-            rethrow; // Re-throw original online error
-          } else {
+          loginSuccess = await authProvider.loginOffline(username, password);
+          if (loginSuccess) {
             _showSnackBar('Logged in using offline credentials', Colors.orange);
           }
         }
       } else {
         // Use offline authentication
-        session = await AuthService.verifyOfflineCredentials(
-          username,
-          password,
-        );
-        if (session == null) {
-          throw Exception(
-            'No offline credentials found. Please connect to internet and login first.',
-          );
+        loginSuccess = await authProvider.loginOffline(username, password);
+        if (loginSuccess) {
+          _showSnackBar('Logged in offline', Colors.orange);
         }
-        _showSnackBar('Logged in offline', Colors.orange);
       }
 
-      if (session != null && mounted) {
-        // Add small delay for better UX
-        await Future.delayed(const Duration(milliseconds: 500));
+      if (loginSuccess && mounted) {
+        // Add small delay for better UX and to allow loading data to complete
+        await Future.delayed(const Duration(milliseconds: 1000));
         // ignore: use_build_context_synchronously
         Navigator.pushReplacementNamed(context, '/home');
+      } else {
+        _showError(
+          authProvider.errorMessage.isNotEmpty
+              ? authProvider.errorMessage
+              : 'Login failed. Please check your credentials.',
+        );
       }
     } catch (e) {
       _showError(e.toString().replaceFirst('Exception: ', ''));
@@ -166,6 +165,8 @@ class _LoginScreenState extends State<LoginScreen>
   }
 
   void _showSnackBar(String message, Color backgroundColor) {
+    if (!mounted) return;
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -251,7 +252,7 @@ class _LoginScreenState extends State<LoginScreen>
             borderRadius: BorderRadius.circular(24),
             boxShadow: [
               BoxShadow(
-                color: Colors.blue.shade200.withValues(alpha: 0.5),
+                color: Colors.blue.shade200.withOpacity(0.5),
                 blurRadius: 20,
                 offset: const Offset(0, 10),
               ),
@@ -329,186 +330,215 @@ class _LoginScreenState extends State<LoginScreen>
   }
 
   Widget _buildLoginForm() {
-    return Form(
-      key: _formKey,
-      child: Column(
-        children: [
-          // Username Field
-          TextFormField(
-            controller: _usernameController,
-            textInputAction: TextInputAction.next,
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
-            decoration: InputDecoration(
-              labelText: 'Username',
-              hintText: 'Enter your username',
-              prefixIcon: Icon(
-                Icons.person_outline_rounded,
-                color: Colors.grey.shade600,
-              ),
-              border: _inputBorder(),
-              enabledBorder: _inputBorder(),
-              focusedBorder: _inputBorder(focused: true),
-              errorBorder: _inputBorder(error: true),
-              focusedErrorBorder: _inputBorder(error: true, focused: true),
-              filled: true,
-              fillColor: Colors.white,
-              contentPadding: const EdgeInsets.all(20),
-            ),
-            validator: (value) {
-              if (value?.isEmpty ?? true) return 'Username is required';
-              if (value!.length < 3)
-                return 'Username must be at least 3 characters';
-              return null;
-            },
-          ),
-
-          const SizedBox(height: 20),
-
-          // Password Field
-          TextFormField(
-            controller: _passwordController,
-            obscureText: _obscurePassword,
-            textInputAction: TextInputAction.done,
-            onFieldSubmitted: (_) => _signIn(),
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
-            decoration: InputDecoration(
-              labelText: 'Password',
-              hintText: 'Enter your password',
-              prefixIcon: Icon(
-                Icons.lock_outline_rounded,
-                color: Colors.grey.shade600,
-              ),
-              suffixIcon: IconButton(
-                icon: Icon(
-                  _obscurePassword
-                      ? Icons.visibility_off_rounded
-                      : Icons.visibility_rounded,
-                  color: Colors.grey.shade600,
-                ),
-                onPressed:
-                    () => setState(() => _obscurePassword = !_obscurePassword),
-              ),
-              border: _inputBorder(),
-              enabledBorder: _inputBorder(),
-              focusedBorder: _inputBorder(focused: true),
-              errorBorder: _inputBorder(error: true),
-              focusedErrorBorder: _inputBorder(error: true, focused: true),
-              filled: true,
-              fillColor: Colors.white,
-              contentPadding: const EdgeInsets.all(20),
-            ),
-            validator: (value) {
-              if (value?.isEmpty ?? true) return 'Password is required';
-              if (value!.length < 6)
-                return 'Password must be at least 6 characters';
-              return null;
-            },
-          ),
-
-          const SizedBox(height: 24),
-
-          // Remember Me
-          Row(
+    return Consumer<AuthProvider>(
+      builder: (context, authProvider, child) {
+        return Form(
+          key: _formKey,
+          child: Column(
             children: [
-              SizedBox(
-                height: 24,
-                width: 24,
-                child: Checkbox(
-                  value: _rememberMe,
-                  onChanged:
-                      (value) => setState(() => _rememberMe = value ?? false),
-                  activeColor: Colors.blue.shade600,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Text(
-                'Remember me for offline access',
-                style: TextStyle(
-                  color: Colors.grey.shade700,
-                  fontSize: 14,
+              // Username Field
+              TextFormField(
+                controller: _usernameController,
+                textInputAction: TextInputAction.next,
+                enabled: !_isLoading,
+                style: const TextStyle(
+                  fontSize: 16,
                   fontWeight: FontWeight.w500,
                 ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 32),
-
-          // Login Button
-          SizedBox(
-            width: double.infinity,
-            height: 56,
-            child: ElevatedButton(
-              onPressed: _isLoading ? null : _signIn,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue.shade600,
-                foregroundColor: Colors.white,
-                elevation: 0,
-                shadowColor: Colors.transparent,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                disabledBackgroundColor: Colors.grey.shade300,
-              ),
-              child:
-                  _isLoading
-                      ? const SizedBox(
-                        height: 24,
-                        width: 24,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2.5,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            Colors.white,
-                          ),
-                        ),
-                      )
-                      : const Text(
-                        'Sign In',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-            ),
-          ),
-
-          // Error Message
-          if (_errorMessage.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.red.shade50,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.red.shade200),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.error_outline,
-                    color: Colors.red.shade600,
-                    size: 20,
+                decoration: InputDecoration(
+                  labelText: 'Username',
+                  hintText: 'Enter your username',
+                  prefixIcon: Icon(
+                    Icons.person_outline_rounded,
+                    color: Colors.grey.shade600,
                   ),
-                  const SizedBox(width: 8),
+                  border: _inputBorder(),
+                  enabledBorder: _inputBorder(),
+                  focusedBorder: _inputBorder(focused: true),
+                  errorBorder: _inputBorder(error: true),
+                  focusedErrorBorder: _inputBorder(error: true, focused: true),
+                  disabledBorder: _inputBorder(disabled: true),
+                  filled: true,
+                  fillColor: _isLoading ? Colors.grey.shade100 : Colors.white,
+                  contentPadding: const EdgeInsets.all(20),
+                ),
+                validator: (value) {
+                  if (value?.isEmpty ?? true) return 'Username is required';
+                  if (value!.length < 3)
+                    return 'Username must be at least 3 characters';
+                  return null;
+                },
+              ),
+
+              const SizedBox(height: 20),
+
+              // Password Field
+              TextFormField(
+                controller: _passwordController,
+                obscureText: _obscurePassword,
+                textInputAction: TextInputAction.done,
+                enabled: !_isLoading,
+                onFieldSubmitted: (_) => _isLoading ? null : _signIn(),
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
+                decoration: InputDecoration(
+                  labelText: 'Password',
+                  hintText: 'Enter your password',
+                  prefixIcon: Icon(
+                    Icons.lock_outline_rounded,
+                    color: Colors.grey.shade600,
+                  ),
+                  suffixIcon: IconButton(
+                    icon: Icon(
+                      _obscurePassword
+                          ? Icons.visibility_off_rounded
+                          : Icons.visibility_rounded,
+                      color: Colors.grey.shade600,
+                    ),
+                    onPressed:
+                        _isLoading
+                            ? null
+                            : () => setState(
+                              () => _obscurePassword = !_obscurePassword,
+                            ),
+                  ),
+                  border: _inputBorder(),
+                  enabledBorder: _inputBorder(),
+                  focusedBorder: _inputBorder(focused: true),
+                  errorBorder: _inputBorder(error: true),
+                  focusedErrorBorder: _inputBorder(error: true, focused: true),
+                  disabledBorder: _inputBorder(disabled: true),
+                  filled: true,
+                  fillColor: _isLoading ? Colors.grey.shade100 : Colors.white,
+                  contentPadding: const EdgeInsets.all(20),
+                ),
+                validator: (value) {
+                  if (value?.isEmpty ?? true) return 'Password is required';
+                  if (value!.length < 6)
+                    return 'Password must be at least 6 characters';
+                  return null;
+                },
+              ),
+
+              const SizedBox(height: 24),
+
+              // Remember Me
+              Row(
+                children: [
+                  SizedBox(
+                    height: 24,
+                    width: 24,
+                    child: Checkbox(
+                      value: _rememberMe,
+                      onChanged:
+                          _isLoading
+                              ? null
+                              : (value) =>
+                                  setState(() => _rememberMe = value ?? false),
+                      activeColor: Colors.blue.shade600,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      _errorMessage,
+                      'Remember me for offline access',
                       style: TextStyle(
-                        color: Colors.red.shade700,
+                        color:
+                            _isLoading
+                                ? Colors.grey.shade500
+                                : Colors.grey.shade700,
                         fontSize: 14,
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
                   ),
                 ],
               ),
-            ),
-          ],
-        ],
-      ),
+
+              const SizedBox(height: 32),
+
+              // Login Button
+              SizedBox(
+                width: double.infinity,
+                height: 56,
+                child: ElevatedButton(
+                  onPressed:
+                      (_isLoading || authProvider.isLoading) ? null : _signIn,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue.shade600,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shadowColor: Colors.transparent,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    disabledBackgroundColor: Colors.grey.shade300,
+                  ),
+                  child:
+                      (_isLoading || authProvider.isLoading)
+                          ? const SizedBox(
+                            height: 24,
+                            width: 24,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Colors.white,
+                              ),
+                            ),
+                          )
+                          : const Text(
+                            'Sign In',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                ),
+              ),
+
+              // Error Message
+              if (_errorMessage.isNotEmpty || authProvider.hasError) ...[
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.red.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.error_outline,
+                        color: Colors.red.shade600,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _errorMessage.isNotEmpty
+                              ? _errorMessage
+                              : authProvider.errorMessage,
+                          style: TextStyle(
+                            color: Colors.red.shade700,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -516,14 +546,11 @@ class _LoginScreenState extends State<LoginScreen>
     return Column(
       children: [
         TextButton(
-          onPressed: () {
-            // Navigate to forgot password or show demo credentials
-            _showDemoCredentials();
-          },
+          onPressed: _isLoading ? null : _showDemoCredentials,
           child: Text(
             'Need help signing in?',
             style: TextStyle(
-              color: Colors.blue.shade600,
+              color: _isLoading ? Colors.grey.shade400 : Colors.blue.shade600,
               fontWeight: FontWeight.w500,
             ),
           ),
@@ -569,12 +596,18 @@ class _LoginScreenState extends State<LoginScreen>
     );
   }
 
-  OutlineInputBorder _inputBorder({bool focused = false, bool error = false}) {
+  OutlineInputBorder _inputBorder({
+    bool focused = false,
+    bool error = false,
+    bool disabled = false,
+  }) {
     return OutlineInputBorder(
       borderRadius: BorderRadius.circular(16),
       borderSide: BorderSide(
         color:
-            error
+            disabled
+                ? Colors.grey.shade300
+                : error
                 ? Colors.red.shade400
                 : focused
                 ? Colors.blue.shade600

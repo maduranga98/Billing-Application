@@ -14,6 +14,8 @@ class LoadingService {
   // Load today's loading for the sales rep
   static Future<Loading?> getTodaysLoading(UserSession session) async {
     try {
+      print('Loading data for employee: ${session.employeeId}');
+
       // Check connectivity
       final connectivity = await Connectivity().checkConnectivity();
       final isOnline =
@@ -36,6 +38,8 @@ class LoadingService {
 
   static Future<Loading?> _loadFromFirebaseAndSync(UserSession session) async {
     try {
+      print('Querying Firebase for loading data...');
+
       // Query loadings collection where salesRepId equals employeeId
       final QuerySnapshot snapshot =
           await _firestore
@@ -56,14 +60,18 @@ class LoadingService {
       }
 
       final doc = snapshot.docs.first;
-      final loading = Loading.fromFirestore(
-        doc.data() as Map<String, dynamic>,
-        doc.id,
-      );
+      final data = doc.data() as Map<String, dynamic>;
+
+      print('Found loading document: ${doc.id}');
+      print('Document data keys: ${data.keys.toList()}');
+
+      // Create loading with proper document ID
+      final loading = Loading.fromFirestore(data, doc.id);
 
       // Load route information if routeId exists
       Loading updatedLoading = loading;
       if (loading.routeId.isNotEmpty) {
+        print('Loading route info for routeId: ${loading.routeId}');
         final route = await getRouteInfo(session, loading.routeId);
         if (route != null) {
           updatedLoading = Loading(
@@ -79,6 +87,7 @@ class LoadingService {
             itemCount: loading.itemCount,
             totalBags: loading.totalBags,
             totalValue: loading.totalValue,
+            totalWeight: loading.totalWeight,
             items: loading.items,
             todayRoute: route,
             createdAt: loading.createdAt,
@@ -90,6 +99,9 @@ class LoadingService {
       // Sync to local database
       await _syncToLocal(updatedLoading);
 
+      print(
+        'Loading data loaded successfully with ${updatedLoading.items.length} items',
+      );
       return updatedLoading;
     } catch (e) {
       print('Error loading from Firebase: $e');
@@ -102,6 +114,8 @@ class LoadingService {
     String routeId,
   ) async {
     try {
+      print('Fetching route info for routeId: $routeId');
+
       final DocumentSnapshot routeDoc =
           await _firestore
               .collection('owners')
@@ -113,9 +127,13 @@ class LoadingService {
               .get();
 
       if (routeDoc.exists) {
-        return TodayRoute.fromMap(routeDoc.data() as Map<String, dynamic>);
+        final data = routeDoc.data() as Map<String, dynamic>;
+        print('Route data found: ${data['name']}');
+        return TodayRoute.fromMap(data);
+      } else {
+        print('Route document not found for ID: $routeId');
+        return null;
       }
-      return null;
     } catch (e) {
       print('Error loading route info: $e');
       return null;
@@ -143,11 +161,135 @@ class LoadingService {
     }
   }
 
-  // Update sold quantities after creating a bill
+  // Search items in current loading (updated for new structure)
+  static Future<List<LoadingItem>> searchItems({
+    required UserSession session,
+    required String query,
+  }) async {
+    try {
+      final loading = await getTodaysLoading(session);
+      if (loading == null) return [];
+
+      if (query.isEmpty) return loading.availableItems;
+
+      final lowerQuery = query.toLowerCase();
+      return loading.availableItems.where((item) {
+        return item.displayName.toLowerCase().contains(lowerQuery) ||
+            item.productCode.toLowerCase().contains(lowerQuery) ||
+            item.productType.toLowerCase().contains(lowerQuery) ||
+            (item.riceType?.toLowerCase().contains(lowerQuery) ?? false);
+      }).toList();
+    } catch (e) {
+      print('Error searching items: $e');
+      return [];
+    }
+  }
+
+  // Get available items for billing
+  static Future<List<LoadingItem>> getAvailableItems(
+    UserSession session,
+  ) async {
+    final loading = await getTodaysLoading(session);
+    return loading?.availableItems ?? [];
+  }
+
+  // Check if sufficient quantity is available (updated for bag-based system)
+  static Future<bool> checkSufficientQuantity({
+    required UserSession session,
+    required String productCode,
+    required int requiredBags,
+  }) async {
+    try {
+      final loading = await getTodaysLoading(session);
+      if (loading == null) return false;
+
+      final item = loading.items.firstWhere(
+        (item) => item.productCode == productCode,
+        orElse:
+            () => LoadingItem(
+              bagQuantity: 0,
+              bagSize: 0,
+              bagsCount: 0,
+              bagsUsed: [],
+              displayName: '',
+              pricePerKg: 0.0,
+              productCode: '',
+              productType: '',
+              totalValue: 0.0,
+              totalWeight: 0.0,
+            ),
+      );
+
+      return item.productCode.isNotEmpty &&
+          item.availableQuantity >= requiredBags;
+    } catch (e) {
+      print('Error checking quantity: $e');
+      return false;
+    }
+  }
+
+  // Validate items before bill creation (updated for bag-based system)
+  static Future<Map<String, dynamic>> validateItemsForBill({
+    required UserSession session,
+    required Map<String, int> itemQuantities, // productCode -> required bags
+  }) async {
+    final List<String> insufficientItems = [];
+    final List<String> unavailableItems = [];
+    bool isValid = true;
+
+    try {
+      final loading = await getTodaysLoading(session);
+
+      if (loading == null) {
+        return {
+          'isValid': false,
+          'error': 'No loading found for today',
+          'insufficientItems': [],
+          'unavailableItems': [],
+        };
+      }
+
+      for (final entry in itemQuantities.entries) {
+        final productCode = entry.key;
+        final requiredBags = entry.value;
+
+        try {
+          final item = loading.items.firstWhere(
+            (item) => item.productCode == productCode,
+          );
+
+          if (item.availableQuantity < requiredBags) {
+            insufficientItems.add(
+              '${item.displayName} (Available: ${item.availableQuantity} bags, Required: $requiredBags bags)',
+            );
+            isValid = false;
+          }
+        } catch (e) {
+          unavailableItems.add(productCode);
+          isValid = false;
+        }
+      }
+
+      return {
+        'isValid': isValid,
+        'insufficientItems': insufficientItems,
+        'unavailableItems': unavailableItems,
+      };
+    } catch (e) {
+      return {
+        'isValid': false,
+        'error': e.toString(),
+        'insufficientItems': [],
+        'unavailableItems': [],
+      };
+    }
+  }
+
+  // Update sold quantities after creating a bill (placeholder for future implementation)
   static Future<bool> updateSoldQuantities({
     required UserSession session,
     required String loadingId,
-    required Map<String, int> itemQuantities, // productId -> quantity sold
+    required Map<String, int> itemQuantities, // productCode -> bags sold
   }) async {
     try {
       // Check connectivity
@@ -157,8 +299,8 @@ class LoadingService {
           connectivity.first != ConnectivityResult.none;
 
       if (isOnline) {
-        // Update in Firebase
-        await _updateFirebaseQuantities(session, loadingId, itemQuantities);
+        // Update in Firebase (future implementation)
+        await _updateFirebaseBagQuantities(session, loadingId, itemQuantities);
       }
 
       // Always update local database
@@ -171,7 +313,7 @@ class LoadingService {
     }
   }
 
-  static Future<void> _updateFirebaseQuantities(
+  static Future<void> _updateFirebaseBagQuantities(
     UserSession session,
     String loadingId,
     Map<String, int> itemQuantities,
@@ -195,195 +337,27 @@ class LoadingService {
       final data = loadingDoc.data() as Map<String, dynamic>;
       final itemsData = data['items'] as List<dynamic>;
 
-      // Update sold quantities for each item
+      // Update bag quantities for each item
       for (int i = 0; i < itemsData.length; i++) {
         final item = itemsData[i] as Map<String, dynamic>;
-        final productId = item['productId'] as String;
+        final productCode = item['productCode'] as String;
 
-        if (itemQuantities.containsKey(productId)) {
-          final currentSold = item['soldQuantity'] ?? 0;
-          final additionalSold = itemQuantities[productId]!;
-          item['soldQuantity'] = currentSold + additionalSold;
+        if (itemQuantities.containsKey(productCode)) {
+          final currentQuantity = item['bagQuantity'] ?? 0;
+          final bagsSold = itemQuantities[productCode]!;
+          // Reduce available quantity
+          item['bagQuantity'] = (currentQuantity - bagsSold).clamp(
+            0,
+            currentQuantity,
+          );
         }
       }
 
       // Update the document
       await loadingRef.update({'items': itemsData});
     } catch (e) {
-      print('Error updating Firebase quantities: $e');
+      print('Error updating Firebase bag quantities: $e');
       throw e;
-    }
-  }
-
-  // Get available items for billing
-  static Future<List<LoadingItem>> getAvailableItems(
-    UserSession session,
-  ) async {
-    final loading = await getTodaysLoading(session);
-    return loading?.availableItems ?? [];
-  }
-
-  // Check if sufficient quantity is available
-  static Future<bool> checkSufficientQuantity({
-    required UserSession session,
-    required String productId,
-    required int requiredQuantity,
-  }) async {
-    try {
-      final loading = await getTodaysLoading(session);
-      if (loading == null) return false;
-
-      final item = loading.items.firstWhere(
-        (item) => item.productId == productId,
-        orElse:
-            () => LoadingItem(
-              productId: '',
-              productName: '',
-              productCode: '',
-              unitPrice: 0,
-              loadedQuantity: 0,
-              soldQuantity: 0,
-              totalWeight: 0,
-              unit: '',
-              category: '',
-            ),
-      );
-
-      return item.productId.isNotEmpty &&
-          item.availableQuantity >= requiredQuantity;
-    } catch (e) {
-      print('Error checking quantity: $e');
-      return false;
-    }
-  }
-
-  // Validate items before bill creation
-  static Future<Map<String, dynamic>> validateItemsForBill({
-    required UserSession session,
-    required Map<String, int> itemQuantities, // productId -> required quantity
-  }) async {
-    final List<String> insufficientItems = [];
-    final List<String> unavailableItems = [];
-    bool isValid = true;
-
-    try {
-      final loading = await getTodaysLoading(session);
-
-      if (loading == null) {
-        return {
-          'isValid': false,
-          'error': 'No loading found for today',
-          'insufficientItems': [],
-          'unavailableItems': [],
-        };
-      }
-
-      for (final entry in itemQuantities.entries) {
-        final productId = entry.key;
-        final requiredQuantity = entry.value;
-
-        try {
-          final item = loading.items.firstWhere(
-            (item) => item.productId == productId,
-          );
-
-          if (item.availableQuantity < requiredQuantity) {
-            insufficientItems.add(
-              '${item.productName} (Available: ${item.availableQuantity}, Required: $requiredQuantity)',
-            );
-            isValid = false;
-          }
-        } catch (e) {
-          unavailableItems.add(productId);
-          isValid = false;
-        }
-      }
-
-      return {
-        'isValid': isValid,
-        'insufficientItems': insufficientItems,
-        'unavailableItems': unavailableItems,
-      };
-    } catch (e) {
-      return {
-        'isValid': false,
-        'error': e.toString(),
-        'insufficientItems': [],
-        'unavailableItems': [],
-      };
-    }
-  }
-
-  // Get loading statistics
-  static Future<Map<String, dynamic>> getLoadingStatistics(
-    UserSession session,
-  ) async {
-    try {
-      final loading = await getTodaysLoading(session);
-
-      if (loading == null) {
-        return {
-          'hasLoading': false,
-          'totalItems': 0,
-          'totalValue': 0.0,
-          'availableItems': 0,
-          'soldItems': 0,
-          'routeName': 'No Route',
-        };
-      }
-
-      final availableItems =
-          loading.items.where((item) => item.availableQuantity > 0).length;
-      final soldItems =
-          loading.items.where((item) => item.soldQuantity > 0).length;
-      final totalAvailableValue = loading.items.fold(
-        0.0,
-        (sum, item) => sum + item.totalValue,
-      );
-
-      return {
-        'hasLoading': true,
-        'totalItems': loading.itemCount,
-        'totalValue': totalAvailableValue,
-        'totalLoadedValue': loading.totalValue,
-        'availableItems': availableItems,
-        'soldItems': soldItems,
-        'routeName': loading.todayRoute?.name ?? 'Unknown Route',
-        'routeAreas': loading.todayRoute?.areas ?? [],
-        'status': loading.status,
-      };
-    } catch (e) {
-      print('Error getting loading statistics: $e');
-      return {
-        'hasLoading': false,
-        'totalItems': 0,
-        'totalValue': 0.0,
-        'availableItems': 0,
-        'soldItems': 0,
-        'routeName': 'Error',
-      };
-    }
-  }
-
-  // Search items in loading
-  static Future<List<LoadingItem>> searchItems({
-    required UserSession session,
-    required String query,
-  }) async {
-    try {
-      final loading = await getTodaysLoading(session);
-      if (loading == null) return [];
-
-      if (query.isEmpty) return loading.availableItems;
-
-      return loading.availableItems.where((item) {
-        return item.productName.toLowerCase().contains(query.toLowerCase()) ||
-            item.productCode.toLowerCase().contains(query.toLowerCase()) ||
-            item.category.toLowerCase().contains(query.toLowerCase());
-      }).toList();
-    } catch (e) {
-      print('Error searching items: $e');
-      return [];
     }
   }
 }

@@ -59,8 +59,45 @@ class AuthProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  // Login with username and password
+  // Login with username and password (tries online first, then offline)
   Future<bool> login(String username, String password) async {
+    _authState = AuthState.loading;
+    _errorMessage = '';
+    notifyListeners();
+
+    try {
+      // Try online authentication first
+      UserSession? session = await AuthService.authenticateOnline(
+        username,
+        password,
+      );
+
+      // If online fails, try offline authentication
+      if (session == null) {
+        session = await AuthService.authenticateOffline(username, password);
+      }
+
+      if (session != null) {
+        _currentSession = session;
+        _authState = AuthState.authenticated;
+        notifyListeners();
+        return true;
+      } else {
+        _authState = AuthState.unauthenticated;
+        _errorMessage = 'Authentication failed';
+        notifyListeners();
+        return false;
+      }
+    } catch (e) {
+      _authState = AuthState.error;
+      _errorMessage = e.toString().replaceFirst('Exception: ', '');
+      notifyListeners();
+      return false;
+    }
+  }
+
+  // Login with online credentials only
+  Future<bool> loginOnline(String username, String password) async {
     _authState = AuthState.loading;
     _errorMessage = '';
     notifyListeners();
@@ -87,17 +124,14 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
-  // Login with offline credentials
+  // Login with offline credentials only
   Future<bool> loginOffline(String username, String password) async {
     _authState = AuthState.loading;
     _errorMessage = '';
     notifyListeners();
 
     try {
-      final session = await AuthService.verifyOfflineCredentials(
-        username,
-        password,
-      );
+      final session = await AuthService.authenticateOffline(username, password);
 
       if (session != null) {
         _currentSession = session;
@@ -165,16 +199,50 @@ class AuthProvider with ChangeNotifier {
       return;
     }
 
-    // Session is still valid, just update the state
-    _authState = AuthState.authenticated;
+    // Try to refresh session with AuthService
+    final refreshedSession = await AuthService.refreshSession();
+    if (refreshedSession != null) {
+      _currentSession = refreshedSession;
+      _authState = AuthState.authenticated;
+    } else {
+      // Session could not be refreshed, logout
+      await logout();
+    }
+
     notifyListeners();
   }
 
-  // Update session data (if needed)
+  // Update session data (used when route info is loaded)
   void updateSession(UserSession session) {
     _currentSession = session;
     _authState = AuthState.authenticated;
     notifyListeners();
+  }
+
+  // Update session with route information
+  Future<void> updateSessionWithRoute({
+    required String routeId,
+    required String? routeName,
+    required List<String>? routeAreas,
+  }) async {
+    if (_currentSession != null) {
+      final updatedSession = _currentSession!.copyWithRoute(
+        routeId: routeId,
+        routeName: routeName,
+        routeAreas: routeAreas,
+      );
+
+      _currentSession = updatedSession;
+
+      // Update stored session
+      await AuthService.updateSessionWithRoute(
+        routeId: routeId,
+        routeName: routeName,
+        routeAreas: routeAreas,
+      );
+
+      notifyListeners();
+    }
   }
 
   // Get Firebase path for current user
@@ -191,29 +259,34 @@ class AuthProvider with ChangeNotifier {
   // Get user initials for avatar
   String get userInitials {
     if (_currentSession == null) return 'U';
-    final name = _currentSession!.name;
-    if (name.isEmpty) return 'U';
-
-    final parts = name.split(' ');
-    if (parts.length >= 2) {
-      return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
-    } else {
-      return name[0].toUpperCase();
-    }
+    return _currentSession!.initials;
   }
 
   // Get greeting message
   String get greetingMessage {
-    final hour = DateTime.now().hour;
-    final firstName = _currentSession?.name.split(' ').first ?? 'User';
+    if (_currentSession == null) return 'Hello!';
+    return AuthService.getGreetingMessage(_currentSession);
+  }
 
-    if (hour < 12) {
-      return 'Good morning, $firstName!';
-    } else if (hour < 17) {
-      return 'Good afternoon, $firstName!';
-    } else {
-      return 'Good evening, $firstName!';
-    }
+  // Get user display name
+  String get userDisplayName {
+    if (_currentSession == null) return 'User';
+    return _currentSession!.displayName;
+  }
+
+  // Get route information
+  String get assignedRoute {
+    if (_currentSession == null) return 'No Route';
+    return _currentSession!.routeDisplayShort;
+  }
+
+  String get routeAreas {
+    if (_currentSession == null) return '';
+    return _currentSession!.routeAreasText;
+  }
+
+  bool get hasRouteAssigned {
+    return _currentSession?.hasRouteAssigned ?? false;
   }
 
   // Reset provider state
@@ -221,6 +294,11 @@ class AuthProvider with ChangeNotifier {
     _currentSession = null;
     _authState = AuthState.initial;
     _errorMessage = '';
+    notifyListeners();
+  }
+
+  // Force state update (for debugging)
+  void forceNotify() {
     notifyListeners();
   }
 }
