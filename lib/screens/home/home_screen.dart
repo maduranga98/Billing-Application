@@ -1,4 +1,4 @@
-// lib/screens/home/home_screen.dart (Complete Updated Version)
+// lib/screens/home/home_screen.dart
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -8,7 +8,6 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/loading_provider.dart';
 import '../../widgets/common/loading_indicator.dart';
-import '../../widgets/common/error_widget.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -84,10 +83,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _connectivitySubscription = Connectivity().onConnectivityChanged.listen((
       result,
     ) {
-      setState(() {
-        _isConnected =
-            result.isNotEmpty && result.first != ConnectivityResult.none;
-      });
+      if (mounted) {
+        setState(() {
+          _isConnected =
+              result.isNotEmpty && result.first != ConnectivityResult.none;
+        });
+      }
     });
   }
 
@@ -129,7 +130,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   const SizedBox(height: 24),
                   _buildConnectionStatus(),
                   const SizedBox(height: 24),
-                  _buildTodaysRouteCard(), // Prominent route display
+                  _buildTodaysRouteCard(),
                   const SizedBox(height: 24),
                   _buildDateTimeCard(),
                   const SizedBox(height: 24),
@@ -285,7 +286,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  // MAIN FEATURE: Prominent Today's Route Card
   Widget _buildTodaysRouteCard() {
     return Consumer<LoadingProvider>(
       builder: (context, loadingProvider, child) {
@@ -405,15 +405,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       ),
                       const SizedBox(width: 24),
                       _buildRouteStatItem(
-                        'Value',
-                        'Rs ${_formatCurrency(loadingProvider.totalValue)}',
-                        Icons.attach_money,
+                        'Bags',
+                        loadingProvider.totalBags.toString(),
+                        Icons.shopping_bag,
                       ),
                       const SizedBox(width: 24),
                       _buildRouteStatItem(
-                        'Progress',
-                        '${loadingProvider.salesProgress.toStringAsFixed(0)}%',
-                        Icons.trending_up,
+                        'Weight',
+                        '${loadingProvider.totalWeight.toStringAsFixed(0)}kg',
+                        Icons.scale,
                       ),
                     ],
                   ),
@@ -921,82 +921,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildItemsNeedingAttention() {
-    return Consumer<LoadingProvider>(
-      builder: (context, loadingProvider, child) {
-        if (!loadingProvider.hasItemsNeedingAttention ||
-            loadingProvider.isLoading) {
-          return const SizedBox.shrink();
-        }
-
-        return Card(
-          elevation: 2,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          color: Colors.orange.shade50,
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.orange.shade100,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Icon(
-                        Icons.warning,
-                        color: Colors.orange.shade600,
-                        size: 20,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        'Items Needing Attention',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.orange.shade700,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  '${loadingProvider.lowStockCount} items are running low and ${loadingProvider.outOfStockCount} items are out of stock.',
-                  style: TextStyle(color: Colors.orange.shade700, fontSize: 14),
-                ),
-                const SizedBox(height: 16),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      Navigator.pushNamed(context, '/loading');
-                    },
-                    icon: const Icon(Icons.visibility, size: 18),
-                    label: const Text('Review Items'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.orange.shade600,
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
+    // Remove this section since daily loadings don't need low stock alerts
+    return const SizedBox.shrink();
   }
 
   Widget _buildFloatingActionButton() {

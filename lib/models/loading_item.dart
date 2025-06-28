@@ -1,85 +1,191 @@
-// lib/models/loading_item.dart
+// lib/models/loading_item.dart (Updated for real structure)
 class LoadingItem {
-  final String productId;
-  final String productName;
+  final int bagQuantity;
+  final int bagSize;
+  final int bagsCount;
+  final List<BagUsed> bagsUsed;
+  final String displayName;
+  final double pricePerKg;
   final String productCode;
-  final double unitPrice;
-  final int loadedQuantity;
-  final int soldQuantity;
+  final String productType;
+  final String? riceType;
+  final double totalValue;
   final double totalWeight;
-  final String unit;
-  final String category;
 
   LoadingItem({
-    required this.productId,
-    required this.productName,
+    required this.bagQuantity,
+    required this.bagSize,
+    required this.bagsCount,
+    required this.bagsUsed,
+    required this.displayName,
+    required this.pricePerKg,
     required this.productCode,
-    required this.unitPrice,
-    required this.loadedQuantity,
-    required this.soldQuantity,
+    required this.productType,
+    this.riceType,
+    required this.totalValue,
     required this.totalWeight,
-    required this.unit,
-    required this.category,
   });
 
   factory LoadingItem.fromMap(Map<String, dynamic> data) {
-    return LoadingItem(
-      productId: data['productId'] ?? '',
-      productName: data['productName'] ?? '',
-      productCode: data['productCode'] ?? '',
-      unitPrice: (data['unitPrice'] ?? 0).toDouble(),
-      loadedQuantity: data['loadedQuantity'] ?? 0,
-      soldQuantity: data['soldQuantity'] ?? 0,
-      totalWeight: (data['totalWeight'] ?? 0).toDouble(),
-      unit: data['unit'] ?? '',
-      category: data['category'] ?? '',
+    try {
+      final bagsUsedList = data['bagsUsed'] as List<dynamic>? ?? [];
+      final bags =
+          bagsUsedList
+              .map((bag) => BagUsed.fromMap(bag as Map<String, dynamic>))
+              .toList();
+
+      return LoadingItem(
+        bagQuantity: _parseInt(data['bagQuantity']),
+        bagSize: _parseInt(data['bagSize']),
+        bagsCount: _parseInt(data['bagsCount']),
+        bagsUsed: bags,
+        displayName: data['displayName'] ?? '',
+        pricePerKg: _parseDouble(data['pricePerKg']),
+        productCode: data['productCode'] ?? '',
+        productType: data['productType'] ?? '',
+        riceType: data['riceType'],
+        totalValue: _parseDouble(data['totalValue']),
+        totalWeight: _parseDouble(data['totalWeight']),
+      );
+    } catch (e) {
+      print('Error parsing LoadingItem: $e');
+      print('Data: $data');
+      rethrow;
+    }
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'bagQuantity': bagQuantity,
+      'bagSize': bagSize,
+      'bagsCount': bagsCount,
+      'bagsUsed': bagsUsed.map((bag) => bag.toMap()).toList(),
+      'displayName': displayName,
+      'pricePerKg': pricePerKg,
+      'productCode': productCode,
+      'productType': productType,
+      'riceType': riceType,
+      'totalValue': totalValue,
+      'totalWeight': totalWeight,
+    };
+  }
+
+  // Helper methods for safe parsing
+  static double _parseDouble(dynamic value) {
+    if (value == null) return 0.0;
+    if (value is double) return value;
+    if (value is int) return value.toDouble();
+    if (value is String) return double.tryParse(value) ?? 0.0;
+    return 0.0;
+  }
+
+  static int _parseInt(dynamic value) {
+    if (value == null) return 0;
+    if (value is int) return value;
+    if (value is double) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? 0;
+    return 0;
+  }
+
+  // Business logic methods
+  int get availableBags =>
+      bagsCount; // All bags are available since there's no sold quantity
+  double get unitPrice => pricePerKg;
+  String get itemName => displayName;
+  String get category => productType;
+
+  // For compatibility with existing code
+  String get productName => displayName;
+  String get productId => productCode;
+  int get loadedQuantity => bagQuantity;
+  int get soldQuantity => 0; // No sold quantity in this structure
+  int get availableQuantity => bagQuantity;
+  String get unit => '${bagSize}kg bags';
+
+  // Status checks
+  bool get isOutOfStock => bagQuantity <= 0;
+  bool get isLowStock => false; // No low stock concept for daily loading
+
+  // Values
+  double get totalLoadedValue => totalValue;
+  double get totalSoldValue => 0.0;
+  double get totalAvailableValue => totalValue;
+
+  // Create copy with updated sold quantity (for future use)
+  LoadingItem copyWithSoldQuantity(int additionalSold) {
+    // For this structure, we don't track sold quantities
+    return this;
+  }
+
+  @override
+  String toString() {
+    return 'LoadingItem(productCode: $productCode, displayName: $displayName, bagQuantity: $bagQuantity)';
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is LoadingItem && other.productCode == productCode;
+  }
+
+  @override
+  int get hashCode => productCode.hashCode;
+}
+
+// lib/models/bag_used.dart
+class BagUsed {
+  final String bagDocId;
+  final String bagId;
+  final int bagSize;
+  final double pricePerKg;
+  final double weight;
+
+  BagUsed({
+    required this.bagDocId,
+    required this.bagId,
+    required this.bagSize,
+    required this.pricePerKg,
+    required this.weight,
+  });
+
+  factory BagUsed.fromMap(Map<String, dynamic> data) {
+    return BagUsed(
+      bagDocId: data['bagDocId'] ?? '',
+      bagId: data['bagId'] ?? '',
+      bagSize: _parseInt(data['bagSize']),
+      pricePerKg: _parseDouble(data['pricePerKg']),
+      weight: _parseDouble(data['weight']),
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
-      'productId': productId,
-      'productName': productName,
-      'productCode': productCode,
-      'unitPrice': unitPrice,
-      'loadedQuantity': loadedQuantity,
-      'soldQuantity': soldQuantity,
-      'totalWeight': totalWeight,
-      'unit': unit,
-      'category': category,
+      'bagDocId': bagDocId,
+      'bagId': bagId,
+      'bagSize': bagSize,
+      'pricePerKg': pricePerKg,
+      'weight': weight,
     };
   }
 
-  // Calculate available quantity for sales
-  int get availableQuantity => loadedQuantity - soldQuantity;
+  static double _parseDouble(dynamic value) {
+    if (value == null) return 0.0;
+    if (value is double) return value;
+    if (value is int) return value.toDouble();
+    if (value is String) return double.tryParse(value) ?? 0.0;
+    return 0.0;
+  }
 
-  // Calculate total value for this item
-  double get totalValue => availableQuantity * unitPrice;
-
-  // Check if item is out of stock
-  bool get isOutOfStock => availableQuantity <= 0;
-
-  // Check if item is low stock (less than 20% of loaded quantity)
-  bool get isLowStock =>
-      availableQuantity <= (loadedQuantity * 0.2) && !isOutOfStock;
-
-  // Create copy with updated sold quantity
-  LoadingItem copyWithSoldQuantity(int additionalSold) {
-    return LoadingItem(
-      productId: productId,
-      productName: productName,
-      productCode: productCode,
-      unitPrice: unitPrice,
-      loadedQuantity: loadedQuantity,
-      soldQuantity: soldQuantity + additionalSold,
-      totalWeight: totalWeight,
-      unit: unit,
-      category: category,
-    );
+  static int _parseInt(dynamic value) {
+    if (value == null) return 0;
+    if (value is int) return value;
+    if (value is double) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? 0;
+    return 0;
   }
 
   @override
   String toString() {
-    return 'LoadingItem(productId: $productId, productName: $productName, availableQuantity: $availableQuantity)';
+    return 'BagUsed(bagId: $bagId, weight: $weight kg)';
   }
 }

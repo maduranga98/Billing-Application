@@ -1,5 +1,7 @@
-// lib/models/loading.dart
+// lib/models/loading.dart (Updated)
 import 'dart:convert';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 import 'loading_item.dart';
 import 'today_route.dart';
 
@@ -14,8 +16,9 @@ class Loading {
   final String salesRepPhone;
   final String status;
   final int itemCount;
-  final double totalBags;
+  final int totalBags;
   final double totalValue;
+  final double totalWeight;
   final List<LoadingItem> items;
   final TodayRoute? todayRoute;
   final DateTime createdAt;
@@ -34,6 +37,7 @@ class Loading {
     required this.itemCount,
     required this.totalBags,
     required this.totalValue,
+    required this.totalWeight,
     required this.items,
     this.todayRoute,
     required this.createdAt,
@@ -41,73 +45,88 @@ class Loading {
   });
 
   factory Loading.fromFirestore(Map<String, dynamic> data, String id) {
-    final itemsData = data['items'] as List<dynamic>? ?? [];
-    final items =
-        itemsData
-            .map((item) => LoadingItem.fromMap(item as Map<String, dynamic>))
-            .toList();
+    try {
+      // Handle items array - could be empty or null
+      final itemsData = data['items'] as List<dynamic>? ?? [];
+      final items =
+          itemsData
+              .map((item) => LoadingItem.fromMap(item as Map<String, dynamic>))
+              .toList();
 
-    TodayRoute? todayRoute;
-    if (data['todayRoute'] != null) {
-      todayRoute = TodayRoute.fromMap(
-        data['todayRoute'] as Map<String, dynamic>,
+      // Handle todayRoute - could be null or a map
+      TodayRoute? todayRoute;
+      if (data['todayRoute'] != null && data['todayRoute'] is Map) {
+        todayRoute = TodayRoute.fromMap(
+          data['todayRoute'] as Map<String, dynamic>,
+        );
+      }
+
+      return Loading(
+        loadingId: id, // Use document ID as loadingId
+        businessId: data['businessId'] ?? '',
+        ownerId: data['ownerId'] ?? '',
+        routeId: data['routeId'] ?? '',
+        salesRepId: data['salesRepId'] ?? '',
+        salesRepName: data['salesRepName'] ?? '',
+        salesRepEmail: data['salesRepEmail'] ?? '',
+        salesRepPhone: data['salesRepPhone'] ?? '',
+        status: data['status'] ?? '',
+        itemCount: data['itemCount'] ?? items.length,
+        totalBags: _parseInt(data['totalBags']),
+        totalValue: _parseDouble(data['totalValue']),
+        totalWeight: _parseDouble(data['totalWeight']),
+        items: items,
+        todayRoute: todayRoute,
+        createdAt: _parseTimestamp(data['createdAt']),
+        createdBy: data['createdBy'] ?? '',
       );
+    } catch (e) {
+      print('Error parsing Loading from Firestore: $e');
+      print('Data: $data');
+      rethrow;
     }
-
-    return Loading(
-      loadingId: id,
-      businessId: data['businessId'] ?? '',
-      ownerId: data['ownerId'] ?? '',
-      routeId: data['routeId'] ?? '',
-      salesRepId: data['salesRepId'] ?? '',
-      salesRepName: data['salesRepName'] ?? '',
-      salesRepEmail: data['salesRepEmail'] ?? '',
-      salesRepPhone: data['salesRepPhone'] ?? '',
-      status: data['status'] ?? '',
-      itemCount: data['itemCount'] ?? 0,
-      totalBags: (data['totalBags'] ?? 0).toDouble(),
-      totalValue: (data['totalValue'] ?? 0).toDouble(),
-      items: items,
-      todayRoute: todayRoute,
-      createdAt: data['createdAt']?.toDate() ?? DateTime.now(),
-      createdBy: data['createdBy'] ?? '',
-    );
   }
 
   factory Loading.fromSQLite(Map<String, dynamic> data) {
-    // Parse items from JSON string
-    final itemsJson = data['items'] as String? ?? '[]';
-    final itemsList = jsonDecode(itemsJson) as List<dynamic>;
-    final items =
-        itemsList
-            .map((item) => LoadingItem.fromMap(item as Map<String, dynamic>))
-            .toList();
+    try {
+      // Parse items from JSON string
+      final itemsJson = data['items'] as String? ?? '[]';
+      final itemsList = jsonDecode(itemsJson) as List<dynamic>;
+      final items =
+          itemsList
+              .map((item) => LoadingItem.fromMap(item as Map<String, dynamic>))
+              .toList();
 
-    // Parse todayRoute from JSON string
-    TodayRoute? todayRoute;
-    if (data['today_route'] != null) {
-      final routeJson = jsonDecode(data['today_route'] as String);
-      todayRoute = TodayRoute.fromMap(routeJson as Map<String, dynamic>);
+      // Parse todayRoute from JSON string
+      TodayRoute? todayRoute;
+      if (data['today_route'] != null) {
+        final routeJson = jsonDecode(data['today_route'] as String);
+        todayRoute = TodayRoute.fromMap(routeJson as Map<String, dynamic>);
+      }
+
+      return Loading(
+        loadingId: data['loading_id'],
+        businessId: data['business_id'],
+        ownerId: data['owner_id'],
+        routeId: data['route_id'],
+        salesRepId: data['sales_rep_id'],
+        salesRepName: data['sales_rep_name'],
+        salesRepEmail: data['sales_rep_email'],
+        salesRepPhone: data['sales_rep_phone'],
+        status: data['status'],
+        itemCount: data['item_count'],
+        totalBags: data['total_bags']?.toInt() ?? 0,
+        totalValue: data['total_value']?.toDouble() ?? 0.0,
+        totalWeight: data['total_weight']?.toDouble() ?? 0.0,
+        items: items,
+        todayRoute: todayRoute,
+        createdAt: DateTime.fromMillisecondsSinceEpoch(data['created_at']),
+        createdBy: data['created_by'],
+      );
+    } catch (e) {
+      print('Error parsing Loading from SQLite: $e');
+      rethrow;
     }
-
-    return Loading(
-      loadingId: data['loading_id'],
-      businessId: data['business_id'],
-      ownerId: data['owner_id'],
-      routeId: data['route_id'],
-      salesRepId: data['sales_rep_id'],
-      salesRepName: data['sales_rep_name'],
-      salesRepEmail: data['sales_rep_email'],
-      salesRepPhone: data['sales_rep_phone'],
-      status: data['status'],
-      itemCount: data['item_count'],
-      totalBags: data['total_bags'],
-      totalValue: data['total_value'],
-      items: items,
-      todayRoute: todayRoute,
-      createdAt: DateTime.fromMillisecondsSinceEpoch(data['created_at']),
-      createdBy: data['created_by'],
-    );
   }
 
   Map<String, dynamic> toSQLite() {
@@ -124,6 +143,7 @@ class Loading {
       'item_count': itemCount,
       'total_bags': totalBags,
       'total_value': totalValue,
+      'total_weight': totalWeight,
       'items': jsonEncode(items.map((item) => item.toMap()).toList()),
       'today_route':
           todayRoute != null ? jsonEncode(todayRoute!.toMap()) : null,
@@ -133,9 +153,34 @@ class Loading {
     };
   }
 
-  // Get available items for billing
+  // Helper methods for safe parsing
+  static double _parseDouble(dynamic value) {
+    if (value == null) return 0.0;
+    if (value is double) return value;
+    if (value is int) return value.toDouble();
+    if (value is String) return double.tryParse(value) ?? 0.0;
+    return 0.0;
+  }
+
+  static int _parseInt(dynamic value) {
+    if (value == null) return 0;
+    if (value is int) return value;
+    if (value is double) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? 0;
+    return 0;
+  }
+
+  static DateTime _parseTimestamp(dynamic value) {
+    if (value == null) return DateTime.now();
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+    return DateTime.now();
+  }
+
+  // Get available items for billing (all items are available)
   List<LoadingItem> get availableItems {
-    return items.where((item) => item.availableQuantity > 0).toList();
+    return items; // All items are available in daily loading
   }
 
   // Check if loading is prepared and ready for sales
@@ -154,6 +199,21 @@ class Loading {
 
   String get routeAreasText {
     return todayRoute?.areasDisplayText ?? 'No areas';
+  }
+
+  // Get total loaded value
+  double get totalLoadedValue {
+    return totalValue;
+  }
+
+  // Get total sold value (0 for now since no sold tracking)
+  double get totalSoldValue {
+    return 0.0;
+  }
+
+  // Get total available value
+  double get totalAvailableValue {
+    return totalValue;
   }
 
   @override
