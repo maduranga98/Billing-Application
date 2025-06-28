@@ -1,18 +1,14 @@
-// lib/screens/home/home_screen.dart
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:intl/intl.dart';
 import 'dart:async';
 import 'package:connectivity_plus/connectivity_plus.dart';
 
-// Providers
 import '../../providers/auth_provider.dart';
 import '../../providers/loading_provider.dart';
-import '../../providers/outlet_provider.dart';
-
-// Screens
-import '../outlets/outlet_list_screen.dart';
-import '../outlets/add_outlet_screen.dart';
-import '../loading/loading_list_screen.dart';
+import '../../providers/billing_provider.dart';
+import '../../widgets/common/loading_indicator.dart';
+import '../../widgets/common/error_widget.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -22,22 +18,23 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
+  DateTime _currentDateTime = DateTime.now();
+  Timer? _timer;
+  bool _isConnected = true;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+
   late AnimationController _slideController;
   late AnimationController _scaleController;
   late Animation<Offset> _slideAnimation;
   late Animation<double> _scaleAnimation;
 
-  Timer? _timer;
-  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
-  bool _isConnected = true;
-
   @override
   void initState() {
     super.initState();
     _setupAnimations();
-    _setupTimer();
+    _startClock();
     _checkConnectivity();
-    _loadData();
+    _loadInitialData();
   }
 
   void _setupAnimations() {
@@ -45,6 +42,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       duration: const Duration(milliseconds: 800),
       vsync: this,
     );
+
     _scaleController = AnimationController(
       duration: const Duration(milliseconds: 600),
       vsync: this,
@@ -54,154 +52,52 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       begin: const Offset(0, 0.3),
       end: Offset.zero,
     ).animate(
-      CurvedAnimation(parent: _slideController, curve: Curves.easeOutBack),
+      CurvedAnimation(parent: _slideController, curve: Curves.easeOutCubic),
     );
 
     _scaleAnimation = Tween<double>(begin: 0.8, end: 1.0).animate(
-      CurvedAnimation(parent: _scaleController, curve: Curves.elasticOut),
+      CurvedAnimation(parent: _scaleController, curve: Curves.easeOutBack),
     );
 
     _slideController.forward();
-    Future.delayed(const Duration(milliseconds: 300), () {
-      _scaleController.forward();
-    });
+    _scaleController.forward();
   }
 
-  void _setupTimer() {
-    _timer = Timer.periodic(const Duration(seconds: 30), (timer) {
+  void _startClock() {
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) {
-        setState(() {}); // Refresh time display
+        setState(() {
+          _currentDateTime = DateTime.now();
+        });
       }
     });
   }
 
   Future<void> _checkConnectivity() async {
-    final connectivityResult = await Connectivity().checkConnectivity();
+    final connectivity = await Connectivity().checkConnectivity();
     setState(() {
-      _isConnected = !connectivityResult.contains(ConnectivityResult.none);
+      _isConnected =
+          connectivity.isNotEmpty &&
+          connectivity.first != ConnectivityResult.none;
     });
 
     _connectivitySubscription = Connectivity().onConnectivityChanged.listen((
-      List<ConnectivityResult> results,
+      result,
     ) {
       setState(() {
-        _isConnected = !results.contains(ConnectivityResult.none);
+        _isConnected =
+            result.isNotEmpty && result.first != ConnectivityResult.none;
       });
     });
   }
 
-  Future<void> _loadData() async {
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    final loadingProvider = Provider.of<LoadingProvider>(
-      context,
-      listen: false,
-    );
-    final outletProvider = Provider.of<OutletProvider>(context, listen: false);
+  Future<void> _loadInitialData() async {
+    final authProvider = context.read<AuthProvider>();
+    final loadingProvider = context.read<LoadingProvider>();
 
     if (authProvider.currentSession != null) {
-      await Future.wait([
-        loadingProvider.loadTodaysLoading(authProvider.currentSession!),
-        outletProvider.loadOutlets(authProvider.currentSession!),
-      ]);
-    }
-  }
-
-  Future<void> _refreshData() async {
-    await _loadData();
-  }
-
-  void _navigateToProfile() {
-    // TODO: Implement profile navigation
-  }
-
-  void _navigateToSettings() {
-    // TODO: Implement settings navigation
-  }
-
-  Future<void> _signOut() async {
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    await authProvider.logout();
-  }
-
-  Future<void> _syncOfflineData() async {
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    final outletProvider = Provider.of<OutletProvider>(context, listen: false);
-
-    if (authProvider.currentSession != null) {
-      // Show loading dialog
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder:
-            (context) => const Dialog(
-              child: Padding(
-                padding: EdgeInsets.all(20),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    CircularProgressIndicator(),
-                    SizedBox(width: 20),
-                    Text('Syncing data...'),
-                  ],
-                ),
-              ),
-            ),
-      );
-
-      try {
-        final result = await outletProvider.syncOfflineOutlets(
-          authProvider.currentSession!,
-        );
-
-        if (mounted) {
-          Navigator.of(context).pop(); // Close loading dialog
-
-          if (result != null) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Row(
-                  children: [
-                    Icon(
-                      result.success ? Icons.check_circle : Icons.warning,
-                      color: Colors.white,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(child: Text(result.message)),
-                  ],
-                ),
-                backgroundColor: result.success ? Colors.green : Colors.orange,
-                behavior: SnackBarBehavior.floating,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                margin: const EdgeInsets.all(16),
-              ),
-            );
-          }
-        }
-      } catch (e) {
-        if (mounted) {
-          Navigator.of(context).pop(); // Close loading dialog
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Row(
-                children: [
-                  const Icon(Icons.error, color: Colors.white),
-                  const SizedBox(width: 12),
-                  Expanded(child: Text('Sync failed: $e')),
-                ],
-              ),
-              backgroundColor: Colors.red,
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              margin: const EdgeInsets.all(16),
-            ),
-          );
-        }
-      }
+      // Load today's loading which will set the route context
+      await loadingProvider.loadTodaysLoading(authProvider.currentSession!);
     }
   }
 
@@ -237,15 +133,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   const SizedBox(height: 24),
                   _buildDateTimeCard(),
                   const SizedBox(height: 24),
-                  _buildQuickStats(),
-                  const SizedBox(height: 24),
-                  _buildQuickActions(),
-                  const SizedBox(height: 24),
                   _buildLoadingOverview(),
                   const SizedBox(height: 24),
-                  _buildOutletOverview(),
+                  _buildQuickActions(), // Updated with billing
+                  const SizedBox(height: 24),
+                  _buildBillingStatus(), // NEW - Billing Status
                   const SizedBox(height: 24),
                   _buildTodaysSummary(),
+                  const SizedBox(height: 24),
+                  _buildItemsNeedingAttention(),
                   const SizedBox(height: 100),
                 ],
               ),
@@ -346,11 +242,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       value: 'logout',
                       child: Row(
                         children: [
-                          Icon(Icons.logout, color: Colors.red.shade600),
+                          Icon(Icons.logout, color: Colors.red.shade700),
                           const SizedBox(width: 12),
                           Text(
-                            'Logout',
-                            style: TextStyle(color: Colors.red.shade600),
+                            'Sign Out',
+                            style: TextStyle(color: Colors.red.shade700),
                           ),
                         ],
                       ),
@@ -364,26 +260,30 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildConnectionStatus() {
-    if (_isConnected) return const SizedBox.shrink();
-
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.orange.shade50,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.orange.shade200),
+        color: _isConnected ? Colors.green.shade50 : Colors.red.shade50,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: _isConnected ? Colors.green.shade200 : Colors.red.shade200,
+        ),
       ),
       child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.wifi_off, color: Colors.orange.shade600, size: 20),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              'You\'re offline. Some features may be limited.',
-              style: TextStyle(
-                color: Colors.orange.shade700,
-                fontWeight: FontWeight.w500,
-              ),
+          Icon(
+            _isConnected ? Icons.wifi : Icons.wifi_off,
+            color: _isConnected ? Colors.green.shade700 : Colors.red.shade700,
+            size: 16,
+          ),
+          const SizedBox(width: 8),
+          Text(
+            _isConnected ? 'Online' : 'Offline',
+            style: TextStyle(
+              color: _isConnected ? Colors.green.shade700 : Colors.red.shade700,
+              fontWeight: FontWeight.w600,
+              fontSize: 12,
             ),
           ),
         ],
@@ -396,25 +296,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       builder: (context, loadingProvider, child) {
         return Container(
           width: double.infinity,
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors:
-                  loadingProvider.hasRouteContext
-                      ? [Colors.green.shade600, Colors.green.shade700]
-                      : [Colors.grey.shade600, Colors.grey.shade700],
+              colors: [Colors.blue.shade600, Colors.blue.shade700],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(16),
             boxShadow: [
               BoxShadow(
-                color:
-                    loadingProvider.hasRouteContext
-                        ? Colors.green.shade200.withOpacity(0.5)
-                        : Colors.grey.shade300.withOpacity(0.5),
-                blurRadius: 20,
-                offset: const Offset(0, 10),
+                color: Colors.blue.shade200,
+                blurRadius: 8,
+                offset: const Offset(0, 4),
               ),
             ],
           ),
@@ -423,22 +317,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             children: [
               Row(
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Icon(
-                      loadingProvider.hasRouteContext
-                          ? Icons.route
-                          : Icons.location_off,
-                      color: Colors.white,
-                      size: 24,
-                    ),
-                  ),
+                  Icon(Icons.route, color: Colors.white, size: 24),
                   const SizedBox(width: 12),
-                  const Expanded(
+                  Expanded(
                     child: Text(
                       'Today\'s Route',
                       style: TextStyle(
@@ -448,23 +329,39 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       ),
                     ),
                   ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      loadingProvider.hasRouteContext ? 'Active' : 'Pending',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
                 ],
               ),
               const SizedBox(height: 16),
               Text(
-                loadingProvider.hasRouteContext
-                    ? loadingProvider.routeDisplayName
-                    : 'No Route Assigned',
-                style: const TextStyle(
+                loadingProvider.routeDisplayName,
+                style: TextStyle(
                   color: Colors.white,
-                  fontSize: 24,
-                  fontWeight: FontWeight.w700,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
-              if (loadingProvider.hasRouteContext) ...[
+              if (loadingProvider.currentRouteAreas.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 Text(
-                  loadingProvider.routeAreasText,
+                  'Areas: ${loadingProvider.routeAreasText}',
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.9),
                     fontSize: 14,
@@ -479,7 +376,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildDateTimeCard() {
-    final now = DateTime.now();
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -488,38 +384,30 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 10,
+            color: Colors.grey.shade200,
+            blurRadius: 8,
             offset: const Offset(0, 2),
           ),
         ],
       ),
       child: Row(
         children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.blue.shade50,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(Icons.today, color: Colors.blue.shade600, size: 24),
-          ),
+          Icon(Icons.schedule, color: Colors.grey.shade600, size: 24),
           const SizedBox(width: 16),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '${now.day}/${now.month}/${now.year}',
-                  style: const TextStyle(
-                    fontSize: 18,
+                  DateFormat('EEEE, MMMM d, y').format(_currentDateTime),
+                  style: TextStyle(
+                    fontSize: 16,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xFF1A1A1A),
+                    color: Colors.grey.shade800,
                   ),
                 ),
-                const SizedBox(height: 4),
                 Text(
-                  _getFormattedTime(now),
+                  DateFormat('hh:mm:ss a').format(_currentDateTime),
                   style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
                 ),
               ],
@@ -530,82 +418,153 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildQuickStats() {
-    return Consumer2<LoadingProvider, OutletProvider>(
-      builder: (context, loadingProvider, outletProvider, child) {
-        return Row(
-          children: [
-            Expanded(
-              child: _buildStatCard(
-                'Loading Items',
-                '${loadingProvider.availableItemCount}',
-                Icons.inventory_2,
-                Colors.blue,
-              ),
+  Widget _buildLoadingOverview() {
+    return Consumer<LoadingProvider>(
+      builder: (context, loadingProvider, child) {
+        if (!loadingProvider.hasLoading) {
+          return Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.shade200,
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildStatCard(
-                'Total Outlets',
-                '${outletProvider.outlets.length}',
-                Icons.store,
-                Colors.green,
-              ),
+            child: Column(
+              children: [
+                Icon(
+                  Icons.inbox_outlined,
+                  size: 48,
+                  color: Colors.grey.shade400,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'No Loading Available',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+                Text(
+                  'Contact your supervisor for today\'s loading',
+                  style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
+                  textAlign: TextAlign.center,
+                ),
+              ],
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildStatCard(
-                'Offline Data',
-                '${outletProvider.offlineOutletCount}',
-                Icons.cloud_off,
-                Colors.orange,
+          );
+        }
+
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.grey.shade200,
+                blurRadius: 8,
+                offset: const Offset(0, 2),
               ),
-            ),
-          ],
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.inventory_2,
+                    color: Colors.orange.shade600,
+                    size: 24,
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    'Today\'s Loading',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey.shade800,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildStatCard(
+                      'Total Items',
+                      '${loadingProvider.totalItems}',
+                      Icons.inventory_2_outlined,
+                      Colors.blue,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildStatCard(
+                      'Available',
+                      '${loadingProvider.availableItemCount}',
+                      Icons.check_circle_outline,
+                      Colors.green,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildStatCard(
+                      'Low Stock',
+                      '${loadingProvider.lowStockCount}',
+                      Icons.warning_outlined,
+                      Colors.orange,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildStatCard(
+                      'Out of Stock',
+                      '${loadingProvider.outOfStockCount}',
+                      Icons.error_outline,
+                      Colors.red,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.pushNamed(context, '/loading');
+                  },
+                  icon: const Icon(Icons.visibility, size: 18),
+                  label: const Text('Review Items'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange.shade600,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         );
       },
-    );
-  }
-
-  Widget _buildStatCard(
-    String title,
-    String value,
-    IconData icon,
-    Color color,
-  ) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          Icon(icon, color: color, size: 24),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w700,
-              color: color,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            title,
-            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-            textAlign: TextAlign.center,
-          ),
-        ],
-      ),
     );
   }
 
@@ -625,7 +584,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ),
           const SizedBox(height: 16),
 
-          // Primary actions
+          // Primary actions - Updated
           Row(
             children: [
               Expanded(
@@ -634,7 +593,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   'Start new billing',
                   Icons.receipt_long,
                   Colors.blue,
-                  () => Navigator.pushNamed(context, '/create-bill'),
+                  () => _startBillingProcess(),
                 ),
               ),
               const SizedBox(width: 12),
@@ -644,12 +603,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   'Register new outlet',
                   Icons.store_outlined,
                   Colors.green,
-                  () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const AddOutletScreen(),
-                    ),
-                  ),
+                  () => Navigator.pushNamed(context, '/add-outlet'),
                 ),
               ),
             ],
@@ -666,27 +620,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   'Check inventory',
                   Icons.inventory_2_outlined,
                   Colors.orange,
-                  () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const LoadingListScreen(),
-                    ),
-                  ),
+                  () => Navigator.pushNamed(context, '/loading'),
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: _buildActionCard(
-                  'Manage Outlets',
-                  'View all outlets',
-                  Icons.store,
+                  'Print Setup',
+                  'Configure printer',
+                  Icons.print_outlined,
                   Colors.purple,
-                  () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const OutletListScreen(),
-                    ),
-                  ),
+                  () => Navigator.pushNamed(context, '/printer-select'),
                 ),
               ),
             ],
@@ -706,19 +650,26 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: color.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: color.withOpacity(0.2)),
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.grey.shade200),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.grey.shade100,
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
         ),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Container(
-              padding: const EdgeInsets.all(12),
+              width: 48,
+              height: 48,
               decoration: BoxDecoration(
-                color: color.withOpacity(0.2),
+                color: color.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Icon(icon, color: color, size: 24),
@@ -727,15 +678,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             Text(
               title,
               style: TextStyle(
-                fontSize: 16,
+                fontSize: 14,
                 fontWeight: FontWeight.w600,
                 color: Colors.grey.shade800,
               ),
+              textAlign: TextAlign.center,
             ),
             const SizedBox(height: 4),
             Text(
               subtitle,
               style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+              textAlign: TextAlign.center,
             ),
           ],
         ),
@@ -743,30 +696,21 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildLoadingOverview() {
-    return Consumer<LoadingProvider>(
-      builder: (context, loadingProvider, child) {
-        if (loadingProvider.loadingState == LoadingState.loading) {
-          return _buildLoadingCard(isLoading: true);
-        }
-
-        if (loadingProvider.loadingState == LoadingState.noLoading) {
-          return _buildLoadingCard(isEmpty: true);
+  // NEW - Billing Status Widget
+  Widget _buildBillingStatus() {
+    return Consumer<BillingProvider>(
+      builder: (context, billingProvider, child) {
+        if (billingProvider.selectedItems.isEmpty) {
+          return const SizedBox.shrink();
         }
 
         return Container(
           width: double.infinity,
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.04),
-                blurRadius: 10,
-                offset: const Offset(0, 2),
-              ),
-            ],
+            color: Colors.blue.shade50,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.blue.shade200),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -774,243 +718,68 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               Row(
                 children: [
                   Icon(
-                    Icons.inventory_2_outlined,
-                    color: Colors.orange.shade600,
-                    size: 24,
+                    Icons.shopping_cart,
+                    color: Colors.blue.shade600,
+                    size: 20,
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 8),
                   Text(
-                    'Today\'s Loading',
+                    'Current Bill in Progress',
                     style: TextStyle(
-                      fontSize: 18,
+                      fontSize: 16,
                       fontWeight: FontWeight.w600,
-                      color: Colors.grey.shade800,
-                    ),
-                  ),
-                  const Spacer(),
-                  TextButton(
-                    onPressed:
-                        () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const LoadingListScreen(),
-                          ),
-                        ),
-                    child: const Text('View All'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildLoadingStat(
-                      'Total Items',
-                      '${loadingProvider.availableItemCount}',
-                      Colors.blue,
-                    ),
-                  ),
-                  Expanded(
-                    child: _buildLoadingStat(
-                      'Low Stock',
-                      '${loadingProvider.lowStockCount}',
-                      Colors.orange,
-                    ),
-                  ),
-                  Expanded(
-                    child: _buildLoadingStat(
-                      'Out of Stock',
-                      '${loadingProvider.outOfStockCount}',
-                      Colors.red,
+                      color: Colors.blue.shade800,
                     ),
                   ),
                 ],
               ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildLoadingCard({bool isLoading = false, bool isEmpty = false}) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          Icon(
-            isLoading ? Icons.hourglass_empty : Icons.inventory_2_outlined,
-            size: 48,
-            color: Colors.grey.shade400,
-          ),
-          const SizedBox(height: 16),
-          Text(
-            isLoading ? 'Loading data...' : 'No loading data available',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w500,
-              color: Colors.grey.shade600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLoadingStat(String label, String value, Color color) {
-    return Column(
-      children: [
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 24,
-            fontWeight: FontWeight.w700,
-            color: color,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          label,
-          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-          textAlign: TextAlign.center,
-        ),
-      ],
-    );
-  }
-
-  Widget _buildOutletOverview() {
-    return Consumer<OutletProvider>(
-      builder: (context, outletProvider, child) {
-        return Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.04),
-                blurRadius: 10,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(
-                    Icons.store_outlined,
-                    color: Colors.green.shade600,
-                    size: 24,
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    'Outlet Management',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.grey.shade800,
-                    ),
-                  ),
-                  const Spacer(),
-                  TextButton(
-                    onPressed:
-                        () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const OutletListScreen(),
-                          ),
-                        ),
-                    child: const Text('Manage'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildOutletStat(
-                      'Total Outlets',
-                      '${outletProvider.outlets.length}',
-                      Colors.green,
-                    ),
-                  ),
-                  Expanded(
-                    child: _buildOutletStat(
-                      'Offline Data',
-                      '${outletProvider.offlineOutletCount}',
-                      Colors.orange,
-                    ),
-                  ),
-                  Expanded(
-                    child: _buildOutletStat(
-                      'Connection',
-                      _isConnected ? 'Online' : 'Offline',
-                      _isConnected ? Colors.green : Colors.red,
-                    ),
-                  ),
-                ],
-              ),
-              if (outletProvider.offlineOutletCount > 0 && _isConnected) ...[
-                const SizedBox(height: 16),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: () => _syncOfflineData(),
-                    icon: const Icon(Icons.sync, size: 18),
-                    label: Text(
-                      'Sync ${outletProvider.offlineOutletCount} outlets',
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.orange[600],
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                  ),
+              const SizedBox(height: 12),
+              if (billingProvider.selectedOutlet != null) ...[
+                Text(
+                  'Outlet: ${billingProvider.selectedOutlet!.outletName}',
+                  style: TextStyle(fontSize: 14, color: Colors.blue.shade700),
                 ),
+                const SizedBox(height: 4),
               ],
+              Text(
+                '${billingProvider.selectedItems.length} items • Rs. ${billingProvider.totalAmount.toStringAsFixed(2)}',
+                style: TextStyle(fontSize: 14, color: Colors.blue.shade700),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () {
+                        billingProvider.clearBill();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Bill cleared')),
+                        );
+                      },
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.blue.shade600,
+                        side: BorderSide(color: Colors.blue.shade300),
+                      ),
+                      child: const Text('Clear'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => _continueBillingProcess(),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue.shade600,
+                        foregroundColor: Colors.white,
+                      ),
+                      child: const Text('Continue'),
+                    ),
+                  ),
+                ],
+              ),
             ],
           ),
         );
       },
-    );
-  }
-
-  Widget _buildOutletStat(String label, String value, Color color) {
-    return Column(
-      children: [
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.w700,
-            color: color,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          label,
-          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-          textAlign: TextAlign.center,
-        ),
-      ],
     );
   }
 
@@ -1023,8 +792,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 10,
+            color: Colors.grey.shade200,
+            blurRadius: 8,
             offset: const Offset(0, 2),
           ),
         ],
@@ -1034,11 +803,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         children: [
           Row(
             children: [
-              Icon(
-                Icons.analytics_outlined,
-                color: Colors.purple.shade600,
-                size: 24,
-              ),
+              Icon(Icons.bar_chart, color: Colors.green.shade600, size: 24),
               const SizedBox(width: 12),
               Text(
                 'Today\'s Summary',
@@ -1054,13 +819,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           Row(
             children: [
               Expanded(
-                child: _buildSummaryItem('Bills Created', '0', Colors.blue),
+                child: _buildSummaryItem('Bills Created', '0', Icons.receipt),
               ),
               Expanded(
                 child: _buildSummaryItem(
-                  'Total Revenue',
+                  'Total Sales',
                   'Rs. 0',
-                  Colors.green,
+                  Icons.monetization_on,
                 ),
               ),
             ],
@@ -1069,10 +834,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           Row(
             children: [
               Expanded(
-                child: _buildSummaryItem('Cash Sales', 'Rs. 0', Colors.orange),
+                child: _buildSummaryItem('Outlets Visited', '0', Icons.store),
               ),
               Expanded(
-                child: _buildSummaryItem('Credit Sales', 'Rs. 0', Colors.red),
+                child: _buildSummaryItem('Items Sold', '0', Icons.shopping_bag),
               ),
             ],
           ),
@@ -1081,47 +846,277 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildSummaryItem(String label, String value, Color color) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-            color: color,
+  Widget _buildSummaryItem(String label, String value, IconData icon) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      margin: const EdgeInsets.symmetric(horizontal: 4),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: Colors.grey.shade600, size: 24),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey.shade800,
+            ),
           ),
-        ),
-      ],
+          Text(
+            label,
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildItemsNeedingAttention() {
+    return Consumer<LoadingProvider>(
+      builder: (context, loadingProvider, child) {
+        if (!loadingProvider.hasLoading || loadingProvider.lowStockCount == 0) {
+          return const SizedBox.shrink();
+        }
+
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.orange.shade200),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.grey.shade200,
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.warning_amber,
+                    color: Colors.orange.shade600,
+                    size: 24,
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    'Items Needing Attention',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey.shade800,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                '${loadingProvider.lowStockCount} items are running low on stock',
+                style: TextStyle(fontSize: 14, color: Colors.orange.shade700),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.pushNamed(context, '/loading');
+                  },
+                  icon: const Icon(Icons.visibility, size: 18),
+                  label: const Text('Review Items'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange.shade600,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildStatCard(
+    String label,
+    String value,
+    IconData icon,
+    Color color,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: color, size: 20),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+          Text(
+            label,
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
     );
   }
 
   Widget _buildFloatingActionButton() {
-    return FloatingActionButton(
-      onPressed:
-          () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const AddOutletScreen()),
+    return Consumer2<LoadingProvider, BillingProvider>(
+      builder: (context, loadingProvider, billingProvider, child) {
+        // If there's a bill in progress, show continue button
+        if (billingProvider.selectedItems.isNotEmpty) {
+          return FloatingActionButton.extended(
+            onPressed: _continueBillingProcess,
+            backgroundColor: Colors.green.shade600,
+            foregroundColor: Colors.white,
+            icon: const Icon(Icons.shopping_cart),
+            label: const Text(
+              'Continue Bill',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+          );
+        }
+
+        // Normal create bill button
+        return FloatingActionButton.extended(
+          onPressed:
+              loadingProvider.hasRouteContext ? _startBillingProcess : null,
+          backgroundColor:
+              loadingProvider.hasRouteContext
+                  ? Colors.blue.shade600
+                  : Colors.grey.shade400,
+          foregroundColor: Colors.white,
+          icon: const Icon(Icons.add),
+          label: const Text(
+            'New Bill',
+            style: TextStyle(fontWeight: FontWeight.w600),
           ),
-      backgroundColor: Colors.green.shade600,
-      foregroundColor: Colors.white,
-      elevation: 8,
-      child: const Icon(Icons.add, size: 28),
+        );
+      },
     );
   }
 
-  // Helper Methods
-  String _getFormattedTime(DateTime time) {
-    final hour = time.hour;
-    final minute = time.minute.toString().padLeft(2, '0');
-    final period = hour >= 12 ? 'PM' : 'AM';
-    final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
-    return '$displayHour:$minute $period';
+  // Helper methods
+  String _formatCurrency(double amount) {
+    return NumberFormat('#,##0').format(amount);
+  }
+
+  Future<void> _refreshData() async {
+    final authProvider = context.read<AuthProvider>();
+    final loadingProvider = context.read<LoadingProvider>();
+
+    if (authProvider.currentSession != null) {
+      await loadingProvider.refreshLoading(authProvider.currentSession!);
+    }
+  }
+
+  void _signOut() async {
+    final authProvider = context.read<AuthProvider>();
+    await authProvider.logout();
+
+    if (mounted) {
+      Navigator.pushReplacementNamed(context, '/login');
+    }
+  }
+
+  void _navigateToProfile() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Profile screen coming soon!'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  void _navigateToSettings() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Settings screen coming soon!'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  // NEW - Billing Process Methods
+  void _startBillingProcess() async {
+    final authProvider = context.read<AuthProvider>();
+    final loadingProvider = context.read<LoadingProvider>();
+    final billingProvider = context.read<BillingProvider>();
+
+    // Check if user has a route context and loading
+    if (!loadingProvider.hasRouteContext) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No route assigned. Contact your supervisor.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    if (!loadingProvider.hasLoading) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No loading available for today.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    // Initialize billing process
+    if (authProvider.currentSession != null) {
+      try {
+        await billingProvider.initializeBilling(authProvider.currentSession!);
+
+        // Navigate to outlet selection
+        Navigator.pushNamed(context, '/billing/outlet-selection');
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to start billing: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  void _continueBillingProcess() {
+    final billingProvider = context.read<BillingProvider>();
+
+    if (billingProvider.selectedOutlet == null) {
+      // If no outlet selected, go to outlet selection
+      Navigator.pushNamed(context, '/billing/outlet-selection');
+    } else {
+      // If outlet selected, go to item selection
+      Navigator.pushNamed(context, '/billing/items');
+    }
   }
 }
