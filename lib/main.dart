@@ -2,7 +2,9 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:lumorabiz_billing/providers/loading_provider.dart';
+import 'package:lumorabiz_billing/providers/outlet_provider.dart';
 import 'package:lumorabiz_billing/screens/home/home_screen.dart';
+import 'package:lumorabiz_billing/screens/outlets/outlet_list_screen.dart';
 import 'package:lumorabiz_billing/splashScreen.dart';
 import 'package:provider/provider.dart';
 
@@ -51,7 +53,7 @@ class LumoraBizApp extends StatelessWidget {
         ChangeNotifierProvider(create: (context) => LoadingProvider()),
 
         // Add more providers here as needed
-        // ChangeNotifierProvider(create: (context) => OutletProvider()),
+        ChangeNotifierProvider(create: (context) => OutletProvider()),
         // ChangeNotifierProvider(create: (context) => BillingProvider()),
         // ChangeNotifierProvider(create: (context) => SyncProvider()),
       ],
@@ -130,7 +132,7 @@ class LumoraBizApp extends StatelessWidget {
           '/loading': (context) => LoadingListScreen(),
 
           // TODO: Add these routes when screens are created
-          // '/outlets': (context) => const OutletListScreen(),
+          '/outlets': (context) => const OutletListScreen(),
           // '/billing': (context) => const BillingScreen(),
           // '/reports': (context) => const ReportsScreen(),
           // '/profile': (context) => const ProfileScreen(),
