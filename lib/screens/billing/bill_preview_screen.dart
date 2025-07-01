@@ -1,4 +1,4 @@
-// lib/screens/billing/bill_preview_screen.dart - Updated with Receipt Widget
+// lib/screens/billing/bill_preview_screen.dart
 import 'package:flutter/material.dart';
 import 'package:lumorabiz_billing/models/print_bill.dart';
 import 'package:provider/provider.dart';
@@ -6,27 +6,9 @@ import 'package:intl/intl.dart';
 import '../../providers/billing_provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/printing/bill_printer_service.dart';
+import '../../services/billing/billing_service.dart';
 import '../../utils/bill_generator.dart';
-import '../../widgets/printing/bill_receipt_widget.dart';
-
-// Temporary placeholder until you create the actual PrinterSelectionScreen
-class PrinterSelectionScreen extends StatelessWidget {
-  const PrinterSelectionScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Printer Setup'),
-        backgroundColor: Colors.blue.shade600,
-        foregroundColor: Colors.white,
-      ),
-      body: const Center(
-        child: Text('Printer setup screen will be implemented'),
-      ),
-    );
-  }
-}
+import '../printing/printer_selection_screen.dart';
 
 class BillPreviewScreen extends StatefulWidget {
   const BillPreviewScreen({super.key});
@@ -39,7 +21,7 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
   String _selectedPaymentType = 'cash';
   final List<String> _paymentTypes = ['cash', 'credit', 'cheque'];
   bool _isPrinting = false;
-  bool _isControllerReady = false;
+  bool _isCreatingBill = false;
   late PrintBill _billData;
 
   @override
@@ -63,6 +45,12 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final billingProvider = context.watch<BillingProvider>();
+    final totalAmount = billingProvider.selectedItems.fold<double>(
+      0.0,
+      (sum, item) => sum + (item.unitPrice * item.quantity),
+    );
+
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -87,181 +75,404 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
                       ? Colors.white
                       : Colors.white70,
             ),
+            tooltip:
+                BillPrinterService.isConnected
+                    ? 'Printer Connected'
+                    : 'Setup Printer',
           ),
         ],
       ),
-      body: Column(
-        children: [
-          // Payment Type Selection
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            color: Colors.grey.shade50,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Payment Method',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade800,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children:
-                      _paymentTypes.map((type) {
-                        final isSelected = _selectedPaymentType == type;
-                        return Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: ChoiceChip(
-                              label: Text(type.toUpperCase()),
-                              selected: isSelected,
-                              onSelected: (selected) {
-                                if (selected) {
-                                  setState(() {
-                                    _selectedPaymentType = type;
-                                    // _generatePrintBill(); // Regenerate bill with new payment type
-                                  });
-                                }
-                              },
-                              backgroundColor: Colors.grey.shade100,
-                              selectedColor: Colors.blue.shade100,
-                              labelStyle: TextStyle(
-                                color:
-                                    isSelected
-                                        ? Colors.blue.shade700
-                                        : Colors.grey.shade700,
-                                fontWeight:
-                                    isSelected
-                                        ? FontWeight.w600
-                                        : FontWeight.normal,
-                              ),
-                              side: BorderSide(
-                                color:
-                                    isSelected
-                                        ? Colors.blue.shade300
-                                        : Colors.grey.shade300,
-                              ),
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                ),
-              ],
-            ),
-          ),
-
-          // Receipt Preview
-          Expanded(
-            child: Container(
-              margin: const EdgeInsets.all(16),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Bill Preview Card
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.grey.shade300),
+                border: Border.all(color: Colors.grey.shade200),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.grey.withOpacity(0.1),
+                    spreadRadius: 1,
+                    blurRadius: 3,
+                    offset: const Offset(0, 1),
+                  ),
+                ],
               ),
-              child: BillReceiptWidget(
-                bill: _billData,
-                onControllerReady: () {
-                  setState(() {
-                    _isControllerReady = true;
-                  });
-                },
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header
+                  Center(
+                    child: Column(
+                      children: [
+                        Text(
+                          'LUMORA BUSINESS',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.blue.shade700,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'No. 123, Main Street, Colombo',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                        Text(
+                          'Tel: +94 11 123 4567',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // Bill Details
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Bill No: ${_generateBillNumber()}',
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Date: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey.shade600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              'Outlet: ${billingProvider.selectedOutlet?.outletName ?? ''}',
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              textAlign: TextAlign.right,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Rep: ${context.read<AuthProvider>().currentSession?.name ?? ''}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey.shade600,
+                              ),
+                              textAlign: TextAlign.right,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // Items Table Header
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 8,
+                      horizontal: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Row(
+                      children: [
+                        Expanded(
+                          flex: 3,
+                          child: Text(
+                            'Item',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: Text(
+                            'Qty',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: Text(
+                            'Price',
+                            textAlign: TextAlign.right,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: Text(
+                            'Total',
+                            textAlign: TextAlign.right,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 8),
+
+                  // Items List
+                  ...billingProvider.selectedItems.map((item) {
+                    final itemTotal = item.unitPrice * item.quantity;
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 4,
+                        horizontal: 12,
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            flex: 3,
+                            child: Text(
+                              item.productName,
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                          ),
+                          Expanded(
+                            child: Text(
+                              '${item.quantity}',
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                          ),
+                          Expanded(
+                            child: Text(
+                              '${item.unitPrice.toStringAsFixed(2)}',
+                              textAlign: TextAlign.right,
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                          ),
+                          Expanded(
+                            child: Text(
+                              '${itemTotal.toStringAsFixed(2)}',
+                              textAlign: TextAlign.right,
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+
+                  const SizedBox(height: 16),
+
+                  // Divider
+                  Container(height: 1, color: Colors.grey.shade300),
+
+                  const SizedBox(height: 16),
+
+                  // Total
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Total Amount:',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          'Rs. ${totalAmount.toStringAsFixed(2)}',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.blue.shade700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
-          ),
-        ],
+
+            const SizedBox(height: 20),
+
+            // Payment Type Selection
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey.shade200),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.grey.withOpacity(0.1),
+                    spreadRadius: 1,
+                    blurRadius: 3,
+                    offset: const Offset(0, 1),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Payment Type',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    children:
+                        _paymentTypes.map((type) {
+                          final isSelected = _selectedPaymentType == type;
+                          return GestureDetector(
+                            onTap: () {
+                              setState(() {
+                                _selectedPaymentType = type;
+                                _generateBillData(); // Regenerate bill data with new payment type
+                              });
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color:
+                                    isSelected
+                                        ? Colors.blue.shade600
+                                        : Colors.grey.shade100,
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                  color:
+                                      isSelected
+                                          ? Colors.blue.shade600
+                                          : Colors.grey.shade300,
+                                ),
+                              ),
+                              child: Text(
+                                type.toUpperCase(),
+                                style: TextStyle(
+                                  color:
+                                      isSelected
+                                          ? Colors.white
+                                          : Colors.grey.shade700,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 80), // Space for bottom buttons
+          ],
+        ),
       ),
       bottomNavigationBar: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: Colors.white,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 4,
-              offset: const Offset(0, -2),
-            ),
-          ],
+          border: Border(top: BorderSide(color: Colors.grey.shade200)),
         ),
         child: SafeArea(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Printer Status Row
-              if (!BillPrinterService.isConnected)
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  margin: const EdgeInsets.only(bottom: 16),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.shade50,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.orange.shade200),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.warning,
-                        color: Colors.orange.shade600,
-                        size: 20,
+              // Print Button (only show if printer is connected)
+              if (BillPrinterService.isConnected) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _isPrinting ? null : _printBillAction,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orange.shade600,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
                       ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Printer not connected. Connect to print bills.',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.orange.shade700,
-                          ),
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: () => _navigateToPrinterSetup(),
-                        child: Text(
-                          'Setup',
-                          style: TextStyle(color: Colors.orange.shade700),
-                        ),
-                      ),
-                    ],
+                    ),
+                    child:
+                        _isPrinting
+                            ? const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    valueColor: AlwaysStoppedAnimation<Color>(
+                                      Colors.white,
+                                    ),
+                                  ),
+                                ),
+                                SizedBox(width: 8),
+                                Text('Printing...'),
+                              ],
+                            )
+                            : const Text(
+                              'Print Bill',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
                   ),
                 ),
+                const SizedBox(height: 12),
+              ],
 
               // Action Buttons Row
               Row(
                 children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.grey.shade700,
-                        side: BorderSide(color: Colors.grey.shade300),
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      child: const Text(
-                        'Back to Items',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-
-                  // Print Button
-                  if (BillPrinterService.isConnected)
+                  // Setup Printer Button (only show if not connected)
+                  if (!BillPrinterService.isConnected)
                     Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed:
-                            (_isPrinting || !_isControllerReady)
-                                ? null
-                                : _printBillAction,
+                      child: ElevatedButton(
+                        onPressed: _navigateToPrinterSetup,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.orange.shade600,
                           foregroundColor: Colors.white,
@@ -270,22 +481,9 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
                             borderRadius: BorderRadius.circular(8),
                           ),
                         ),
-                        icon:
-                            _isPrinting
-                                ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor: AlwaysStoppedAnimation(
-                                      Colors.white,
-                                    ),
-                                  ),
-                                )
-                                : const Icon(Icons.print, size: 18),
-                        label: Text(
-                          _isPrinting ? 'Printing...' : 'Print',
-                          style: const TextStyle(
+                        child: const Text(
+                          'Setup Printer',
+                          style: TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w600,
                           ),
@@ -293,12 +491,13 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
                       ),
                     ),
 
-                  if (BillPrinterService.isConnected) const SizedBox(width: 12),
+                  if (!BillPrinterService.isConnected)
+                    const SizedBox(width: 12),
 
                   // Create Bill Button
                   Expanded(
                     child: ElevatedButton(
-                      onPressed: _createBill,
+                      onPressed: _isCreatingBill ? null : _createBill,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.green.shade600,
                         foregroundColor: Colors.white,
@@ -307,13 +506,32 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
                           borderRadius: BorderRadius.circular(8),
                         ),
                       ),
-                      child: const Text(
-                        'Create Bill',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
+                      child:
+                          _isCreatingBill
+                              ? const Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor: AlwaysStoppedAnimation<Color>(
+                                        Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                  SizedBox(width: 8),
+                                  Text('Creating...'),
+                                ],
+                              )
+                              : const Text(
+                                'Create Bill',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
                     ),
                   ),
                 ],
@@ -366,53 +584,58 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
                           fontWeight: FontWeight.w600,
                           color:
                               BillPrinterService.isConnected
-                                  ? Colors.green.shade700
-                                  : Colors.red.shade700,
+                                  ? Colors.green
+                                  : Colors.red,
                         ),
                       ),
                     ),
                   ],
                 ),
-                if (BillPrinterService.selectedAddress != null) ...[
+
+                if (BillPrinterService.isConnected) ...[
                   const SizedBox(height: 8),
                   Text(
-                    'Device: ${BillPrinterService.selectedAddress}',
-                    style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+                    'Device: ${BillPrinterService.selectedDevice?.name ?? 'Unknown'}',
+                    style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
                   ),
                 ],
-                const SizedBox(height: 24),
 
-                if (BillPrinterService.isConnected && _isControllerReady) ...[
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: _testPrint,
-                      icon: const Icon(Icons.print_outlined),
-                      label: const Text('Test Print'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green.shade600,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
+                const SizedBox(height: 20),
+
+                // Action Buttons
+                Row(
+                  children: [
+                    if (BillPrinterService.isConnected) ...[
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            _testPrint();
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue.shade600,
+                            foregroundColor: Colors.white,
+                          ),
+                          child: const Text('Test Print'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                    ],
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: _navigateToPrinterSetup,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.orange.shade600,
+                          foregroundColor: Colors.white,
+                        ),
+                        child: Text(
+                          BillPrinterService.isConnected
+                              ? 'Change Printer'
+                              : 'Setup Printer',
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                ],
-
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: _navigateToPrinterSetup,
-                    icon: const Icon(Icons.settings),
-                    label: Text(
-                      BillPrinterService.isConnected
-                          ? 'Printer Settings'
-                          : 'Setup Printer',
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                    ),
-                  ),
+                  ],
                 ),
               ],
             ),
@@ -423,6 +646,7 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
   Future<void> _testPrint() async {
     try {
       final result = await BillPrinterService.testPrint();
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -432,7 +656,6 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
             backgroundColor: result ? Colors.green : Colors.red,
           ),
         );
-        Navigator.pop(context); // Close bottom sheet
       }
     } catch (e) {
       if (mounted) {
@@ -501,6 +724,23 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
       return;
     }
 
+    // Validate bill first
+    final validation = billingProvider.validateBill();
+    if (!validation['isValid']) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(validation['error']),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    final totalAmount = billingProvider.selectedItems.fold<double>(
+      0.0,
+      (sum, item) => sum + (item.unitPrice * item.quantity),
+    );
+
     // Show confirmation dialog
     showDialog(
       context: context,
@@ -516,9 +756,7 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
               children: [
                 Text('Outlet: ${billingProvider.selectedOutlet!.outletName}'),
                 Text('Items: ${billingProvider.selectedItems.length}'),
-                Text(
-                  'Total: Rs. ${billingProvider.totalAmount.toStringAsFixed(2)}',
-                ),
+                Text('Total: Rs. ${totalAmount.toStringAsFixed(2)}'),
                 Text('Payment: ${_selectedPaymentType.toUpperCase()}'),
                 const SizedBox(height: 16),
                 if (!BillPrinterService.isConnected)
@@ -558,38 +796,62 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
               ),
               ElevatedButton(
                 onPressed: () {
-                  Navigator.pop(context);
+                  Navigator.pop(context); // Close dialog
                   _processBillCreation();
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.green.shade600,
                   foregroundColor: Colors.white,
                 ),
-                child: const Text('Confirm'),
+                child: const Text('Create'),
               ),
             ],
           ),
     );
   }
 
-  void _processBillCreation() {
-    // TODO: Implement actual bill creation logic
-    // This should:
-    // 1. Create bill in local database
-    // 2. Update stock quantities
-    // 3. Sync to Firebase if online
-    // 4. Navigate to success screen
+  Future<void> _processBillCreation() async {
+    setState(() => _isCreatingBill = true);
 
-    final billingProvider = context.read<BillingProvider>();
+    try {
+      final billingProvider = context.read<BillingProvider>();
+      final authProvider = context.read<AuthProvider>();
 
-    // Clear the bill after creation
-    billingProvider.clearBill();
+      // Create the bill using BillingService
+      final billId = await BillingService.createBill(
+        session: authProvider.currentSession!,
+        outlet: billingProvider.selectedOutlet!,
+        items: billingProvider.selectedItems,
+        paymentType: _selectedPaymentType,
+      );
 
-    // Navigate to success screen
-    Navigator.pushNamedAndRemoveUntil(
-      context,
-      '/billing/success',
-      (route) => route.settings.name == '/home',
-    );
+      if (mounted) {
+        // Clear the bill after successful creation
+        billingProvider.clearBill();
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Bill created successfully! ID: $billId'),
+            backgroundColor: Colors.green,
+          ),
+        );
+
+        // Navigate back to billing screen
+        Navigator.popUntil(context, (route) => route.isFirst);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to create bill: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isCreatingBill = false);
+      }
+    }
   }
 }

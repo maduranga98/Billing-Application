@@ -7,8 +7,6 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/loading_provider.dart';
 import '../../providers/billing_provider.dart';
-import '../../widgets/common/loading_indicator.dart';
-import '../../widgets/common/error_widget.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
