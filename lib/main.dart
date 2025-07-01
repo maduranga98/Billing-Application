@@ -10,6 +10,7 @@ import 'package:lumorabiz_billing/screens/billing/item_selection_screen.dart';
 import 'package:lumorabiz_billing/screens/billing/outlet_selection_screen.dart';
 import 'package:lumorabiz_billing/screens/home/home_screen.dart';
 import 'package:lumorabiz_billing/screens/outlets/outlet_list_screen.dart';
+import 'package:lumorabiz_billing/screens/printing/printer_selection_screen.dart';
 import 'package:lumorabiz_billing/splashScreen.dart';
 import 'package:provider/provider.dart';
 
@@ -29,7 +30,6 @@ import 'screens/loading/loading_list_screen.dart';
 
 // Legacy imports (update these to new structure when ready)
 import 'addOutlet.dart';
-import 'pages/printer_select_screener.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -133,7 +133,7 @@ class LumoraBizApp extends StatelessWidget {
 
           // Legacy routes (update these later)
           '/add-outlet': (context) => const AddOutlet(),
-          '/create-bill': (context) => PrinterSelectScreener(),
+          '/create-bill': (context) => PrinterSelectionScreen(),
           '/loading': (context) => LoadingListScreen(),
           '/outlets': (context) => const OutletListScreen(),
           '/billing/outlet-selection':

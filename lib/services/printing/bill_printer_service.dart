@@ -1,109 +1,811 @@
-// lib/services/printing/bill_printer_service.dart
-import 'package:flutter/material.dart';
-import 'package:flutter_bluetooth_printer/flutter_bluetooth_printer.dart';
+import 'dart:async';
+import 'dart:typed_data';
+import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 import 'package:intl/intl.dart';
 import '../../models/print_bill.dart';
 
 class BillPrinterService {
-  static String? _selectedAddress;
+  static BluetoothInfo? _selectedDevice;
   static bool _isConnected = false;
-  static ReceiptController? _controller;
 
-  // Get current connected device address
-  static String? get selectedAddress => _selectedAddress;
+  // Get current connected device
+  static BluetoothInfo? get selectedDevice => _selectedDevice;
   static bool get isConnected => _isConnected;
 
-  // Select a Bluetooth printer device
-  static Future<String?> selectDevice(BuildContext context) async {
+  // Currency formatter
+  static final NumberFormat currency = NumberFormat.currency(
+    symbol: 'Rs. ',
+    decimalDigits: 2,
+  );
+
+  // Check if Bluetooth is available and enabled
+  static Future<bool> isBluetoothAvailable() async {
     try {
-      final selected = await FlutterBluetoothPrinter.selectDevice(context);
-      if (selected != null) {
-        _selectedAddress = selected.address;
-        _isConnected = true;
-        return selected.address;
-      }
-      return null;
+      return await PrintBluetoothThermal.bluetoothEnabled;
     } catch (e) {
-      print('Error selecting device: $e');
-      return null;
-    }
-  }
-
-  // Disconnect from printer
-  static void disconnect() {
-    _selectedAddress = null;
-    _isConnected = false;
-    _controller = null;
-  }
-
-  // Set the receipt controller
-  static void setController(ReceiptController controller) {
-    _controller = controller;
-  }
-
-  // Print bill using Receipt widget
-  static Future<bool> printBill(PrintBill bill) async {
-    if (_controller == null || _selectedAddress == null) {
-      throw Exception('Printer not connected or controller not set');
-    }
-
-    try {
-      final result = await _controller!.print(address: _selectedAddress!);
-      return result;
-    } catch (e) {
-      print('Error printing bill: $e');
+      print('Error checking Bluetooth availability: $e');
       return false;
     }
   }
 
-  // Print raw text (for testing)
-  static Future<bool> printText(String text) async {
-    if (_controller == null || _selectedAddress == null) {
-      throw Exception('Printer not connected or controller not set');
-    }
-
+  // Scan for available devices
+  static Future<List<BluetoothInfo>> scanDevices() async {
     try {
-      final result = await _controller!.print(address: _selectedAddress!);
-      return result;
+      print('Checking Bluetooth availability...');
+      final bluetoothEnabled = await isBluetoothAvailable();
+      if (!bluetoothEnabled) {
+        throw Exception('Bluetooth is not enabled');
+      }
+
+      print('Starting device scan...');
+      final List<BluetoothInfo> devices =
+          await PrintBluetoothThermal.pairedBluetooths;
+
+      print('Found ${devices.length} paired devices');
+      for (final device in devices) {
+        print('Device: ${device.name} (${device.macAdress})');
+      }
+
+      return devices;
     } catch (e) {
-      print('Error printing text: $e');
+      print('Error scanning devices: $e');
+      return [];
+    }
+  }
+
+  // Connect to a specific device
+  static Future<bool> connectToDevice(BluetoothInfo device) async {
+    try {
+      print('Attempting to connect to ${device.name} (${device.macAdress})');
+
+      // Check if already connected
+      final currentStatus = await PrintBluetoothThermal.connectionStatus;
+      if (currentStatus) {
+        print('Already connected, disconnecting first...');
+        await PrintBluetoothThermal.disconnect;
+        await Future.delayed(const Duration(seconds: 1));
+      }
+
+      // Attempt connection
+      final bool result = await PrintBluetoothThermal.connect(
+        macPrinterAddress: device.macAdress,
+      );
+
+      if (result) {
+        _selectedDevice = device;
+        _isConnected = true;
+        print('Successfully connected to ${device.name}');
+
+        // Verify connection
+        await Future.delayed(const Duration(milliseconds: 500));
+        final verifyStatus = await PrintBluetoothThermal.connectionStatus;
+        if (verifyStatus) {
+          print('Connection verified successfully');
+          return true;
+        } else {
+          print('Connection verification failed');
+          _isConnected = false;
+          _selectedDevice = null;
+          return false;
+        }
+      } else {
+        print('Failed to connect to ${device.name}');
+        return false;
+      }
+    } catch (e) {
+      print('Error connecting to device: $e');
+      return false;
+    }
+  }
+
+  // Disconnect from current device
+  static Future<void> disconnect() async {
+    try {
+      print('Disconnecting from printer...');
+
+      final currentStatus = await PrintBluetoothThermal.connectionStatus;
+      if (currentStatus) {
+        await PrintBluetoothThermal.disconnect;
+        print('Disconnection command sent');
+      }
+    } catch (e) {
+      print('Error during disconnection: $e');
+    } finally {
+      _selectedDevice = null;
+      _isConnected = false;
+      print('Printer state cleared');
+    }
+  }
+
+  // Check if device is connected
+  static Future<bool> isDeviceConnected() async {
+    try {
+      final status = await PrintBluetoothThermal.connectionStatus;
+
+      // Update internal state if it's out of sync
+      if (_isConnected != status) {
+        _isConnected = status;
+        if (!status) {
+          _selectedDevice = null;
+        }
+      }
+
+      return status;
+    } catch (e) {
+      print('Error checking connection: $e');
+      return false;
+    }
+  }
+
+  // Print bill receipt - main method
+  static Future<bool> printBill(PrintBill bill) async {
+    return await printBillFormatted(bill);
+  }
+
+  // Print bill with ESC/POS commands for better formatting
+  static Future<bool> printBillFormatted(PrintBill bill) async {
+    try {
+      // Check connection
+      final connected = await isDeviceConnected();
+      if (!connected) {
+        throw Exception('Printer not connected');
+      }
+
+      print('Generating formatted receipt for bill ${bill.billNumber}');
+
+      // Generate receipt using ESC/POS commands
+      final List<int> bytes = _generateReceiptBytes(bill);
+
+      // Print the receipt
+      final bool result = await PrintBluetoothThermal.writeBytes(bytes);
+
+      if (result) {
+        print('Formatted bill printed successfully');
+        return true;
+      } else {
+        print('Formatted print failed');
+        return false;
+      }
+    } catch (e) {
+      print('Error printing formatted bill: $e');
+      return false;
+    }
+  }
+
+  // Print bill using text format (fallback)
+  static Future<bool> printBillText(PrintBill bill) async {
+    try {
+      // Check connection
+      final connected = await isDeviceConnected();
+      if (!connected) {
+        throw Exception('Printer not connected');
+      }
+
+      print('Generating text receipt for bill ${bill.billNumber}');
+
+      // Generate receipt using formatted text
+      final String receiptText = _generateReceiptText(bill);
+
+      // Convert string to bytes and print
+      final List<int> bytes = receiptText.codeUnits;
+      final bool result = await PrintBluetoothThermal.writeBytes(bytes);
+
+      if (result) {
+        print('Text bill printed successfully');
+        return true;
+      } else {
+        print('Text print failed');
+        return false;
+      }
+    } catch (e) {
+      print('Error printing text bill: $e');
       return false;
     }
   }
 
   // Test print functionality
   static Future<bool> testPrint() async {
-    if (_controller == null || _selectedAddress == null) {
-      throw Exception('Printer not connected or controller not set');
-    }
-
     try {
-      final result = await _controller!.print(address: _selectedAddress!);
-      return result;
+      // Check connection
+      final connected = await isDeviceConnected();
+      if (!connected) {
+        throw Exception('Printer not connected');
+      }
+
+      print('Performing test print');
+
+      // Generate test receipt
+      final String testText = _generateTestReceipt();
+
+      // Convert string to bytes and print
+      final List<int> bytes = testText.codeUnits;
+      final bool result = await PrintBluetoothThermal.writeBytes(bytes);
+
+      if (result) {
+        print('Test print successful');
+        return true;
+      } else {
+        print('Test print failed');
+        return false;
+      }
     } catch (e) {
       print('Error in test print: $e');
       return false;
     }
   }
 
-  // Check if ready to print
-  static bool isReadyToPrint() {
-    return _controller != null && _selectedAddress != null;
+  // Generate simple text receipt
+  static String _generateReceiptText(PrintBill bill) {
+    final StringBuffer receipt = StringBuffer();
+    const int paperWidth = 48; // 104mm paper width in characters
+    const String margin = '    '; // 4-space margin for left and right
+
+    // Company Header - Centered
+    receipt.writeln('$margin${'=' * (paperWidth - 8)}');
+    receipt.writeln('$margin${_centerText('LUMORA BUSINESS', paperWidth - 8)}');
+    receipt.writeln(
+      '$margin${_centerText('No. 123, Main Street', paperWidth - 8)}',
+    );
+    receipt.writeln(
+      '$margin${_centerText('Colombo, Sri Lanka', paperWidth - 8)}',
+    );
+    receipt.writeln(
+      '$margin${_centerText('Tel: +94 11 123 4567', paperWidth - 8)}',
+    );
+    receipt.writeln('$margin${'=' * (paperWidth - 8)}');
+    receipt.writeln();
+
+    // Bill details
+    receipt.writeln('${margin}Bill No: ${bill.billNumber}');
+    receipt.writeln(
+      '${margin}Date: ${DateFormat('dd/MM/yyyy').format(bill.billDate)}',
+    );
+    receipt.writeln(
+      '${margin}Time: ${DateFormat('HH:mm:ss').format(bill.billDate)}',
+    );
+    receipt.writeln();
+    receipt.writeln();
+
+    // Customer and Sales Rep details in side-by-side format with more space
+    String customerName =
+        bill.customerName.length > 20
+            ? '${bill.customerName.substring(0, 17)}...'
+            : bill.customerName.padRight(20);
+    String repName =
+        bill.salesRepName.length > 20
+            ? '${bill.salesRepName.substring(0, 17)}...'
+            : bill.salesRepName.padRight(20);
+
+    receipt.writeln(
+      '$margin${'Customer:'.padRight(10)}$customerName  ${'Rep:'.padRight(6)}$repName',
+    );
+
+    if (bill.outletAddress.isNotEmpty || bill.salesRepPhone.isNotEmpty) {
+      String address =
+          bill.outletAddress.length > 20
+              ? '${bill.outletAddress.substring(0, 17)}...'
+              : bill.outletAddress.padRight(20);
+      String repPhone =
+          bill.salesRepPhone.length > 20
+              ? '${bill.salesRepPhone.substring(0, 17)}...'
+              : bill.salesRepPhone.padRight(20);
+
+      receipt.writeln(
+        '$margin${'Address:'.padRight(10)}$address  ${'Phone:'.padRight(6)}$repPhone',
+      );
+    }
+
+    if (bill.outletPhone.isNotEmpty) {
+      receipt.writeln('$margin${'Phone:'.padRight(10)}${bill.outletPhone}');
+    }
+    receipt.writeln();
+    receipt.writeln();
+    receipt.writeln();
+
+    receipt.writeln('$margin${'-' * (paperWidth - 8)}');
+
+    // Table header - full width
+    receipt.writeln(
+      '$margin${'No'.padRight(4)}${'Item Name'.padRight(22)}${'Price'.padRight(10)}${'Qty'.padRight(6)}${'Value'.padLeft(6)}',
+    );
+    receipt.writeln('$margin${'-' * (paperWidth - 8)}');
+
+    // Items in table format - full width
+    for (final item in bill.items) {
+      String itemName =
+          item.itemName.length > 21
+              ? '${item.itemName.substring(0, 18)}...'
+              : item.itemName.padRight(21);
+
+      String itemNumber = item.itemNumber.toString().padRight(4);
+      String price = item.unitPrice.toStringAsFixed(2).padLeft(9);
+      String quantity = item.quantity.toString().padLeft(5);
+      String value = item.totalPrice.toStringAsFixed(2).padLeft(6);
+
+      receipt.writeln('$margin$itemNumber $itemName $price $quantity $value');
+    }
+
+    receipt.writeln('$margin${'-' * (paperWidth - 8)}');
+
+    // Totals
+    if (bill.discountAmount > 0) {
+      receipt.writeln(
+        '$margin${'Subtotal:'.padRight(36)}${(bill.totalAmount + bill.discountAmount).toStringAsFixed(2).padLeft(8)}',
+      );
+      receipt.writeln(
+        '$margin${'Discount:'.padRight(36)}-${bill.discountAmount.toStringAsFixed(2).padLeft(8)}',
+      );
+    }
+
+    if (bill.taxAmount > 0) {
+      receipt.writeln(
+        '$margin${'Tax:'.padRight(36)}${bill.taxAmount.toStringAsFixed(2).padLeft(8)}',
+      );
+    }
+
+    receipt.writeln(
+      '$margin${'TOTAL:'.padRight(36)}Rs.${bill.finalAmount.toStringAsFixed(2).padLeft(8)}',
+    );
+    receipt.writeln('$margin${'-' * (paperWidth - 8)}');
+    receipt.writeln();
+    receipt.writeln();
+
+    // Signature section - side by side format
+    receipt.writeln(
+      '$margin${'Customer Signature:'.padRight(25)}${'Sales Rep Signature:'.padRight(19)}',
+    );
+    receipt.writeln(
+      '$margin${'___________________'.padRight(25)}${'___________________'.padRight(19)}',
+    );
+    receipt.writeln();
+    receipt.writeln();
+
+    // Thank you message
+    receipt.writeln(
+      '$margin${_centerText('Thank you for your business!', paperWidth - 8)}',
+    );
+    receipt.writeln();
+    receipt.writeln('$margin${'-' * (paperWidth - 8)}');
+
+    // Solution by section
+    receipt.writeln('$margin${_centerText('Solution by', paperWidth - 8)}');
+    receipt.writeln(
+      '$margin${_centerText('Lumora Ventures Pvt Ltd', paperWidth - 8)}',
+    );
+    receipt.writeln(
+      '$margin${_centerText('Mobile: +94 76 620 6555', paperWidth - 8)}',
+    );
+    receipt.writeln();
+    receipt.writeln();
+    receipt.writeln();
+
+    return receipt.toString();
+  }
+
+  // Helper method to center text
+  static String _centerText(String text, int width) {
+    if (text.length >= width) return text;
+    int padding = (width - text.length) ~/ 2;
+    return '${' ' * padding}$text${' ' * (width - text.length - padding)}';
+  }
+
+  // Generate ESC/POS formatted receipt bytes with proper margins - FIXED
+  // Generate ESC/POS formatted receipt bytes with 30-space separator
+  static List<int> _generateReceiptBytes(PrintBill bill) {
+    List<int> bytes = [];
+
+    // Margin configuration
+    const int paperWidthChars =
+        80; // Increased paper width to accommodate 30 spaces
+    const int leftMarginChars = 3;
+    const int rightMarginChars = 3;
+    const int contentWidth =
+        paperWidthChars - leftMarginChars - rightMarginChars;
+
+    // Convert margins to dots (8 dots per character for most thermal printers)
+    const int leftMarginDots = leftMarginChars * 8;
+
+    // Create margin strings for text-based approach
+    final String leftMarginText = ' ' * leftMarginChars;
+
+    // ESC/POS commands
+    const ESC = 0x1B;
+    const GS = 0x1D;
+
+    // Initialize printer
+    bytes.addAll([ESC, 0x40]);
+
+    // Method 1: Try ESC/POS margin commands
+    bytes.addAll([ESC, 0x6C, leftMarginDots]); // Set left margin
+
+    // Method 2: Set print area width (creates right margin effect)
+    final int printAreaDots = contentWidth * 8;
+    bytes.addAll([GS, 0x57, printAreaDots & 0xFF, (printAreaDots >> 8) & 0xFF]);
+
+    // Helper function to add text margins manually (fallback)
+    List<int> addTextMargin(String text) {
+      return '$leftMarginText$text'.codeUnits;
+    }
+
+    // Helper function for horizontal lines with proper width
+    String getHorizontalLine() {
+      return '-' * contentWidth;
+    }
+
+    // Helper function for safe string truncation
+    String safeTruncate(String text, int maxLength, {String suffix = '...'}) {
+      if (maxLength <= 0) return '';
+      if (text.length <= maxLength) return text;
+      if (maxLength <= suffix.length) return text.substring(0, maxLength);
+      return '${text.substring(0, maxLength - suffix.length)}$suffix';
+    }
+
+    // Set center alignment for company header
+    bytes.addAll([ESC, 0x61, 0x01]);
+
+    // Company header - bold and larger
+    bytes.addAll([ESC, 0x45, 0x01]); // Bold on
+    bytes.addAll([GS, 0x21, 0x11]); // Double height and width
+
+    // For headers, use text margins as ESC/POS margins might not work with center alignment
+    bytes.addAll(addTextMargin('Sajith Rice Mill'));
+    bytes.addAll('\n'.codeUnits);
+    bytes.addAll([GS, 0x21, 0x00]); // Normal size
+    bytes.addAll([ESC, 0x45, 0x00]); // Bold off
+
+    // Company details with text margins
+    bytes.addAll(addTextMargin('No. 123, Main Street'));
+    bytes.addAll('\n'.codeUnits);
+    bytes.addAll(addTextMargin('Colombo, Sri Lanka'));
+    bytes.addAll('\n'.codeUnits);
+    bytes.addAll(addTextMargin('Tel: +94 11 123 4567'));
+    bytes.addAll('\n'.codeUnits);
+    bytes.addAll('\n'.codeUnits);
+
+    // Horizontal line with proper width
+    bytes.addAll(addTextMargin(getHorizontalLine()));
+    bytes.addAll('\n'.codeUnits);
+
+    // Set left alignment for bill details
+    bytes.addAll([ESC, 0x61, 0x00]);
+
+    // Bill details with text margins
+    bytes.addAll(addTextMargin('Bill No: ${bill.billNumber}'));
+    bytes.addAll('\n'.codeUnits);
+    bytes.addAll(
+      addTextMargin('Date: ${DateFormat('dd/MM/yyyy').format(bill.billDate)}'),
+    );
+    bytes.addAll('\n'.codeUnits);
+    bytes.addAll(
+      addTextMargin('Time: ${DateFormat('HH:mm:ss').format(bill.billDate)}'),
+    );
+    bytes.addAll('\n'.codeUnits);
+    bytes.addAll('\n'.codeUnits);
+
+    // Customer and Sales Rep details with 30-space separator
+    const int separatorWidth = 5;
+    final int availableWidth =
+        contentWidth - separatorWidth; // Remaining width for both sections
+    final int customerSectionWidth =
+        (availableWidth * 0.6).round(); // 60% of available width
+    final int repSectionWidth =
+        availableWidth - customerSectionWidth; // Remaining for rep
+
+    // Ensure minimum widths
+    final int safeCustomerWidth =
+        customerSectionWidth < 15 ? 15 : customerSectionWidth;
+    final int safeRepWidth = repSectionWidth < 10 ? 10 : repSectionWidth;
+
+    // Calculate available space for actual content (excluding labels)
+    final int customerNameSpace =
+        safeCustomerWidth - 10; // "Customer: " = 10 chars
+    final int customerAddressSpace =
+        safeCustomerWidth - 9; // "Address: " = 9 chars
+    final int customerPhoneSpace = safeCustomerWidth - 7; // "Phone: " = 7 chars
+    final int repNameSpace = safeRepWidth - 5; // "Rep: " = 5 chars
+    final int repPhoneSpace = safeRepWidth - 7; // "Phone: " = 7 chars
+
+    // Create separator string with 30 spaces
+    final String separator = ' ' * separatorWidth;
+
+    // Truncate content to fit available space (allow longer text since we have more space)
+    String customerName = safeTruncate(bill.customerName, customerNameSpace);
+    String customerAddress = safeTruncate(
+      bill.outletAddress,
+      customerAddressSpace,
+    );
+    String customerPhone = safeTruncate(bill.outletPhone, customerPhoneSpace);
+    String repName = safeTruncate(bill.salesRepName, repNameSpace);
+    String repPhone = safeTruncate(bill.salesRepPhone, repPhoneSpace);
+
+    // Row 1: Customer Name | Rep Name
+    String customerNameRow = 'Customer: $customerName'.padRight(
+      safeCustomerWidth,
+    );
+    String repNameRow = 'Rep: $repName';
+    bytes.addAll(addTextMargin(customerNameRow + separator + repNameRow));
+    bytes.addAll('\n'.codeUnits);
+
+    // Row 2: Customer Address | Rep Phone (if either exists)
+    if (bill.outletAddress.isNotEmpty || bill.salesRepPhone.isNotEmpty) {
+      String customerAddressRow =
+          bill.outletAddress.isNotEmpty
+              ? 'Address: $customerAddress'.padRight(safeCustomerWidth)
+              : ''.padRight(safeCustomerWidth);
+      String repPhoneRow =
+          bill.salesRepPhone.isNotEmpty ? 'Phone: $repPhone' : '';
+      bytes.addAll(addTextMargin(customerAddressRow + separator + repPhoneRow));
+      bytes.addAll('\n'.codeUnits);
+    }
+
+    // Row 3: Customer Phone (if exists)
+    if (bill.outletPhone.isNotEmpty) {
+      String customerPhoneRow = 'Phone: $customerPhone'.padRight(
+        safeCustomerWidth,
+      );
+      bytes.addAll(addTextMargin(customerPhoneRow + separator));
+      bytes.addAll('\n'.codeUnits);
+    }
+
+    bytes.addAll('\n'.codeUnits);
+
+    // Horizontal line before table
+    bytes.addAll(addTextMargin(getHorizontalLine()));
+    bytes.addAll('\n'.codeUnits);
+
+    // Table header - optimized for wider content
+    bytes.addAll([ESC, 0x45, 0x01]); // Bold on
+
+    // Column widths optimized for wider paper
+    const int noWidth = 4; // 4 chars for item number
+    const int qtyWidth = 5; // 5 chars for quantity
+    const int priceWidth = 10; // 10 chars for price
+    const int valueWidth = 12; // 12 chars for value
+    final int nameWidth =
+        contentWidth -
+        noWidth -
+        priceWidth -
+        qtyWidth -
+        valueWidth -
+        4; // Remaining space
+
+    // Ensure nameWidth is positive
+    final int safeNameWidth = nameWidth > 10 ? nameWidth : 10;
+
+    String headerRow =
+        'No'.padRight(noWidth) +
+        ' ' +
+        'Item Name'.padRight(safeNameWidth) +
+        ' ' +
+        'Price'.padLeft(priceWidth) +
+        ' ' +
+        'Qty'.padLeft(qtyWidth) +
+        ' ' +
+        'Value'.padLeft(valueWidth);
+
+    bytes.addAll(addTextMargin(headerRow));
+    bytes.addAll('\n'.codeUnits);
+    bytes.addAll([ESC, 0x45, 0x00]); // Bold off
+
+    bytes.addAll(addTextMargin(getHorizontalLine()));
+    bytes.addAll('\n'.codeUnits);
+
+    // Items in table format
+    for (final item in bill.items) {
+      String itemName = safeTruncate(item.itemName, safeNameWidth);
+
+      String itemRow =
+          '${item.itemNumber}'.padRight(noWidth) +
+          ' ' +
+          itemName.padRight(safeNameWidth) +
+          ' ' +
+          '${item.unitPrice.toStringAsFixed(2)}'.padLeft(priceWidth) +
+          ' ' +
+          '${item.quantity}'.padLeft(qtyWidth) +
+          ' ' +
+          '${item.totalPrice.toStringAsFixed(2)}'.padLeft(valueWidth);
+
+      bytes.addAll(addTextMargin(itemRow));
+      bytes.addAll('\n'.codeUnits);
+    }
+
+    bytes.addAll(addTextMargin(getHorizontalLine()));
+    bytes.addAll('\n'.codeUnits);
+
+    // Totals section with better spacing
+    final int labelWidth = (contentWidth * 0.75).round(); // 75% for label
+    final int amountWidth = contentWidth - labelWidth; // 25% for amount
+
+    if (bill.discountAmount > 0) {
+      bytes.addAll(
+        addTextMargin(
+          'Subtotal:'.padRight(labelWidth) +
+              '${(bill.totalAmount + bill.discountAmount).toStringAsFixed(2)}'
+                  .padLeft(amountWidth),
+        ),
+      );
+      bytes.addAll('\n'.codeUnits);
+
+      bytes.addAll(
+        addTextMargin(
+          'Discount:'.padRight(labelWidth) +
+              '-${bill.discountAmount.toStringAsFixed(2)}'.padLeft(amountWidth),
+        ),
+      );
+      bytes.addAll('\n'.codeUnits);
+    }
+
+    if (bill.taxAmount > 0) {
+      bytes.addAll(
+        addTextMargin(
+          'Tax:'.padRight(labelWidth) +
+              '${bill.taxAmount.toStringAsFixed(2)}'.padLeft(amountWidth),
+        ),
+      );
+      bytes.addAll('\n'.codeUnits);
+    }
+
+    // Total amount - bold
+    bytes.addAll([ESC, 0x45, 0x01]); // Bold on
+    bytes.addAll(
+      addTextMargin(
+        'TOTAL:'.padRight(labelWidth) +
+            'Rs.${bill.finalAmount.toStringAsFixed(2)}'.padLeft(amountWidth),
+      ),
+    );
+    bytes.addAll('\n'.codeUnits);
+    bytes.addAll([ESC, 0x45, 0x00]); // Bold off
+
+    bytes.addAll(addTextMargin(getHorizontalLine()));
+    bytes.addAll('\n'.codeUnits);
+    bytes.addAll('\n'.codeUnits);
+
+    // Signature section with proper spacing
+    final int leftSignWidth =
+        (contentWidth * 0.4).round(); // 40% for customer signature
+    final int rightSignWidth =
+        (contentWidth * 0.4).round(); // 40% for rep signature
+    final int signSeparator =
+        contentWidth - leftSignWidth - rightSignWidth; // Remaining space
+
+    bytes.addAll(
+      addTextMargin(
+        'Customer Signature:'.padRight(leftSignWidth) +
+            ' ' * signSeparator +
+            'Rep Signature:'.padLeft(rightSignWidth),
+      ),
+    );
+    bytes.addAll('\n'.codeUnits);
+    bytes.addAll(
+      addTextMargin(
+        '${'_' * (leftSignWidth - 1)}${' ' * (signSeparator + 1)}${'_' * (rightSignWidth - 1)}',
+      ),
+    );
+    bytes.addAll('\n'.codeUnits);
+    bytes.addAll('\n'.codeUnits);
+
+    // Thank you message - center aligned
+    bytes.addAll([ESC, 0x61, 0x01]); // Center alignment
+    bytes.addAll(addTextMargin('Thank you for your business!'));
+    bytes.addAll('\n'.codeUnits);
+    bytes.addAll('\n'.codeUnits);
+
+    // Horizontal line
+    bytes.addAll(addTextMargin(getHorizontalLine()));
+    bytes.addAll('\n'.codeUnits);
+
+    // Solution by section - center aligned
+    bytes.addAll(addTextMargin('Solution by'));
+    bytes.addAll('\n'.codeUnits);
+    bytes.addAll([ESC, 0x45, 0x01]); // Bold on
+    bytes.addAll(addTextMargin('Lumora Ventures Pvt Ltd'));
+    bytes.addAll('\n'.codeUnits);
+    bytes.addAll([ESC, 0x45, 0x00]); // Bold off
+    bytes.addAll(addTextMargin('Mobile: +94 76 620 6555'));
+    bytes.addAll('\n'.codeUnits);
+
+    // Feed and cut
+    bytes.addAll('\n\n\n'.codeUnits);
+    bytes.addAll([GS, 0x56, 0x00]); // Cut paper
+
+    return bytes;
+  }
+
+  // Generate test receipt
+  static String _generateTestReceipt() {
+    final StringBuffer test = StringBuffer();
+    const int paperWidth = 48; // 104mm paper width in characters
+    const String margin = '    '; // 4-space margin
+
+    test.writeln('$margin${'=' * (paperWidth - 8)}');
+    test.writeln('$margin${_centerText('TEST PRINT', paperWidth - 8)}');
+    test.writeln('$margin${_centerText('Lumora Business', paperWidth - 8)}');
+    test.writeln('$margin${_centerText('Printer Test', paperWidth - 8)}');
+    test.writeln('$margin${'=' * (paperWidth - 8)}');
+    test.writeln();
+    test.writeln(
+      '$margin${_centerText(DateFormat('dd/MM/yyyy HH:mm:ss').format(DateTime.now()), paperWidth - 8)}',
+    );
+    test.writeln();
+    test.writeln(
+      '$margin${_centerText('If you can read this,', paperWidth - 8)}',
+    );
+    test.writeln(
+      '$margin${_centerText('your printer is working!', paperWidth - 8)}',
+    );
+    test.writeln();
+    test.writeln('$margin${'=' * (paperWidth - 8)}');
+    test.writeln();
+    test.writeln();
+    test.writeln();
+
+    return test.toString();
+  }
+
+  // Get available paper sizes
+  static Future<List<String>> getAvailablePaperSizes() async {
+    try {
+      // Common thermal printer paper sizes
+      return ['58mm', '80mm', '104mm'];
+    } catch (e) {
+      print('Error getting paper sizes: $e');
+      return ['58mm', '80mm', '104mm'];
+    }
   }
 
   // Get printer status
-  static Map<String, dynamic> getPrinterStatus() {
-    return {
-      'isConnected': _isConnected,
-      'hasController': _controller != null,
-      'deviceAddress': _selectedAddress ?? 'None',
-      'isReady': isReadyToPrint(),
-    };
+  static Future<Map<String, dynamic>> getPrinterStatus() async {
+    try {
+      final status = await PrintBluetoothThermal.connectionStatus;
+      final bluetoothEnabled = await PrintBluetoothThermal.bluetoothEnabled;
+
+      return {
+        'isConnected': _isConnected,
+        'deviceName': _selectedDevice?.name ?? 'None',
+        'deviceAddress': _selectedDevice?.macAdress ?? 'None',
+        'connectionStatus': status,
+        'bluetoothEnabled': bluetoothEnabled,
+        'lastUpdate': DateTime.now().toString(),
+      };
+    } catch (e) {
+      return {'isConnected': false, 'error': e.toString()};
+    }
   }
 
-  // Format currency (matching your existing pattern)
-  static final NumberFormat currency = NumberFormat.currency(
-    symbol: 'Rs. ',
-    decimalDigits: 2,
-  );
+  // Check if ready to print
+  static bool isReadyToPrint() {
+    return _isConnected && _selectedDevice != null;
+  }
+
+  // Print raw text (useful for testing)
+  static Future<bool> printRawText(String text) async {
+    if (!_isConnected || _selectedDevice == null) {
+      throw Exception('Printer not connected');
+    }
+
+    try {
+      // Convert string to bytes and print
+      final List<int> bytes = text.codeUnits;
+      final bool result = await PrintBluetoothThermal.writeBytes(bytes);
+      return result;
+    } catch (e) {
+      print('Error printing raw text: $e');
+      return false;
+    }
+  }
+
+  // Advanced: Print with custom ESC/POS commands
+  static Future<bool> printWithCommands(List<int> commands) async {
+    if (!_isConnected || _selectedDevice == null) {
+      throw Exception('Printer not connected');
+    }
+
+    try {
+      final bool result = await PrintBluetoothThermal.writeBytes(commands);
+      return result;
+    } catch (e) {
+      print('Error printing with commands: $e');
+      return false;
+    }
+  }
 }
