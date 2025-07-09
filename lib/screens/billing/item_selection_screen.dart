@@ -1,4 +1,4 @@
-// lib/screens/billing/item_selection_screen.dart
+// lib/screens/billing/item_selection_screen.dart (Enhanced with Price Display)
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/billing_provider.dart';
@@ -21,6 +21,29 @@ class _ItemSelectionScreenState extends State<ItemSelectionScreen> {
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _proceedToBill() {
+    final billingProvider = context.read<BillingProvider>();
+    final validation = billingProvider.validateBill();
+
+    if (validation['isValid']) {
+      Navigator.pushNamed(context, '/billing/preview');
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(validation['error']),
+          backgroundColor: Colors.red.shade600,
+        ),
+      );
+    }
+  }
+
+  void _showItemDetailDialog(LoadingItem item) {
+    showDialog(
+      context: context,
+      builder: (context) => ItemDetailDialog(item: item),
+    );
   }
 
   @override
@@ -66,22 +89,53 @@ class _ItemSelectionScreenState extends State<ItemSelectionScreen> {
                   vertical: 12,
                 ),
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      'Total Amount',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey.shade700,
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Total Amount',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.grey.shade700,
+                            ),
+                          ),
+                          Text(
+                            'Rs.${billingProvider.totalAmount.toStringAsFixed(2)}',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blue.shade600,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    Text(
-                      'Rs. ${billingProvider.totalAmount.toStringAsFixed(2)}',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.blue.shade600,
+                    const SizedBox(width: 16),
+                    ElevatedButton(
+                      onPressed:
+                          billingProvider.selectedItems.isNotEmpty
+                              ? _proceedToBill
+                              : null,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue.shade600,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 32,
+                          vertical: 16,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text(
+                        'Create Bill',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ],
@@ -101,25 +155,11 @@ class _ItemSelectionScreenState extends State<ItemSelectionScreen> {
                   controller: _searchController,
                   decoration: InputDecoration(
                     hintText: 'Search items...',
-                    prefixIcon: const Icon(Icons.search, color: Colors.grey),
-                    suffixIcon:
-                        _searchQuery.isNotEmpty
-                            ? IconButton(
-                              icon: const Icon(Icons.clear, color: Colors.grey),
-                              onPressed: () {
-                                _searchController.clear();
-                                setState(() {
-                                  _searchQuery = '';
-                                });
-                              },
-                            )
-                            : null,
+                    prefixIcon: const Icon(Icons.search),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
+                      borderSide: BorderSide(color: Colors.grey.shade300),
                     ),
-                    filled: true,
-                    fillColor: Colors.grey.shade100,
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 16,
                       vertical: 12,
@@ -136,50 +176,51 @@ class _ItemSelectionScreenState extends State<ItemSelectionScreen> {
                 // Category Filter
                 Consumer<BillingProvider>(
                   builder: (context, billingProvider, child) {
-                    final categories = [
-                      'All',
-                      ...billingProvider.availableItems
-                          .map((item) => item.category)
-                          .toSet()
-                          .toList(),
-                    ];
+                    final categories =
+                        ['All'] +
+                        billingProvider.availableItems
+                            .map((item) => item.category)
+                            .toSet()
+                            .toList();
 
                     return SizedBox(
-                      height: 36,
-                      child: ListView.separated(
+                      height: 40,
+                      child: ListView.builder(
                         scrollDirection: Axis.horizontal,
                         itemCount: categories.length,
-                        separatorBuilder:
-                            (context, index) => const SizedBox(width: 8),
                         itemBuilder: (context, index) {
                           final category = categories[index];
                           final isSelected = _selectedCategory == category;
 
-                          return FilterChip(
-                            label: Text(category),
-                            selected: isSelected,
-                            onSelected: (selected) {
-                              setState(() {
-                                _selectedCategory = category;
-                              });
-                            },
-                            backgroundColor: Colors.grey.shade100,
-                            selectedColor: Colors.blue.shade100,
-                            labelStyle: TextStyle(
-                              color:
-                                  isSelected
-                                      ? Colors.blue.shade700
-                                      : Colors.grey.shade700,
-                              fontWeight:
-                                  isSelected
-                                      ? FontWeight.w600
-                                      : FontWeight.normal,
-                            ),
-                            side: BorderSide(
-                              color:
-                                  isSelected
-                                      ? Colors.blue.shade300
-                                      : Colors.grey.shade300,
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: FilterChip(
+                              label: Text(category),
+                              selected: isSelected,
+                              onSelected: (selected) {
+                                setState(() {
+                                  _selectedCategory = category;
+                                });
+                              },
+                              backgroundColor: Colors.grey.shade100,
+                              selectedColor: Colors.blue.shade100,
+                              checkmarkColor: Colors.blue.shade700,
+                              labelStyle: TextStyle(
+                                color:
+                                    isSelected
+                                        ? Colors.blue.shade700
+                                        : Colors.grey.shade700,
+                                fontWeight:
+                                    isSelected
+                                        ? FontWeight.w600
+                                        : FontWeight.normal,
+                              ),
+                              side: BorderSide(
+                                color:
+                                    isSelected
+                                        ? Colors.blue.shade300
+                                        : Colors.grey.shade300,
+                              ),
                             ),
                           );
                         },
@@ -226,11 +267,19 @@ class _ItemSelectionScreenState extends State<ItemSelectionScreen> {
                         ),
                         const SizedBox(height: 16),
                         Text(
-                          'No items available',
+                          'No items found',
                           style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w500,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
                             color: Colors.grey.shade600,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Try adjusting your search or filter criteria',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey.shade500,
                           ),
                         ),
                       ],
@@ -238,14 +287,15 @@ class _ItemSelectionScreenState extends State<ItemSelectionScreen> {
                   );
                 }
 
-                return ListView.separated(
+                return ListView.builder(
                   padding: const EdgeInsets.all(16),
                   itemCount: filteredItems.length,
-                  separatorBuilder:
-                      (context, index) => const SizedBox(height: 12),
                   itemBuilder: (context, index) {
                     final item = filteredItems[index];
-                    return _buildItemCard(item, billingProvider);
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _buildItemCard(item, billingProvider),
+                    );
                   },
                 );
               },
@@ -253,86 +303,12 @@ class _ItemSelectionScreenState extends State<ItemSelectionScreen> {
           ),
         ],
       ),
-      bottomNavigationBar: Consumer<BillingProvider>(
-        builder: (context, billingProvider, child) {
-          if (billingProvider.selectedItems.isEmpty) {
-            return const SizedBox.shrink();
-          }
-
-          return Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.1),
-                  blurRadius: 4,
-                  offset: const Offset(0, -2),
-                ),
-              ],
-            ),
-            child: SafeArea(
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '${billingProvider.selectedItems.length} items selected',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.grey.shade600,
-                          ),
-                        ),
-                        Text(
-                          'Rs. ${billingProvider.totalAmount.toStringAsFixed(2)}',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.blue.shade600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  ElevatedButton(
-                    onPressed: () => _proceedToBill(),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blue.shade600,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 32,
-                        vertical: 16,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: const Text(
-                      'Create Bill',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
     );
   }
 
   Widget _buildItemCard(LoadingItem item, BillingProvider billingProvider) {
     final isSelected = billingProvider.isItemSelected(item.productId);
-    final selectedQuantity = billingProvider.getSelectedQuantity(
-      item.productId,
-    );
+    final selectedItem = billingProvider.getSelectedItem(item.productId);
 
     return Card(
       elevation: 2,
@@ -348,128 +324,212 @@ class _ItemSelectionScreenState extends State<ItemSelectionScreen> {
         onTap: () => _showItemDetailDialog(item),
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Item Icon
-              Container(
-                width: 50,
-                height: 50,
-                decoration: BoxDecoration(
-                  color:
-                      isSelected ? Colors.blue.shade100 : Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  Icons.inventory_2,
-                  color:
-                      isSelected ? Colors.blue.shade600 : Colors.grey.shade600,
-                  size: 24,
-                ),
-              ),
-              const SizedBox(width: 16),
+              Row(
+                children: [
+                  // Item Icon
+                  Container(
+                    width: 50,
+                    height: 50,
+                    decoration: BoxDecoration(
+                      color:
+                          isSelected
+                              ? Colors.blue.shade100
+                              : Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      Icons.inventory_2,
+                      color:
+                          isSelected
+                              ? Colors.blue.shade600
+                              : Colors.grey.shade600,
+                      size: 24,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
 
-              // Item Details
-              Expanded(
+                  // Item Details
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          item.productName,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Code: ${item.productCode}',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Available: ${item.availableQuantity} ${item.unit}',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color:
+                                item.availableQuantity <= 10
+                                    ? Colors.orange.shade700
+                                    : Colors.green.shade700,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // Selection Status
+                  if (isSelected && selectedItem != null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.shade100,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        '${selectedItem.quantity} selected',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.blue.shade700,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+
+              // Price Information
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                ),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      item.productName,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
+                    // Price Range
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Price Range',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade600,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        Text(
+                          'Rs.${item.minPrice.toStringAsFixed(2)} - Rs.${item.maxPrice.toStringAsFixed(2)}/kg',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Code: ${item.productCode}',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey.shade600,
-                      ),
+                    const SizedBox(height: 8),
+
+                    // Current/Selected Price
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          isSelected ? 'Selected Price' : 'Default Price',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade600,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        Text(
+                          'Rs.${(selectedItem?.unitPrice ?? item.pricePerKg).toStringAsFixed(2)}/kg',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color:
+                                isSelected
+                                    ? Colors.blue.shade700
+                                    : Colors.green.shade700,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'Available: ${item.availableQuantity} ${item.unit}',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color:
-                            item.availableQuantity <= 10
-                                ? Colors.orange.shade700
-                                : Colors.green.shade700,
-                        fontWeight: FontWeight.w500,
+
+                    // Total for selected quantity
+                    if (isSelected && selectedItem != null) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'Total Amount',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey.shade600,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          Text(
+                            'Rs.${selectedItem.totalPrice.toStringAsFixed(2)}',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blue.shade700,
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Rs. ${item.unitPrice.toStringAsFixed(2)} per ${item.unit}',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.blue.shade600,
-                      ),
-                    ),
+                    ],
                   ],
                 ),
               ),
 
-              // Selection Indicator
-              if (isSelected) ...[
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.shade600,
-                    borderRadius: BorderRadius.circular(20),
+              const SizedBox(height: 12),
+
+              // Action Button
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => _showItemDetailDialog(item),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor:
+                        isSelected
+                            ? Colors.blue.shade600
+                            : Colors.grey.shade600,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                   ),
                   child: Text(
-                    '$selectedQuantity',
+                    isSelected ? 'Update Item' : 'Add to Bill',
                     style: const TextStyle(
-                      color: Colors.white,
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                 ),
-              ],
-
-              const SizedBox(width: 8),
-              Icon(
-                Icons.arrow_forward_ios,
-                size: 16,
-                color: Colors.grey.shade400,
               ),
             ],
           ),
         ),
       ),
     );
-  }
-
-  void _showItemDetailDialog(LoadingItem item) {
-    showDialog(
-      context: context,
-      builder: (context) => ItemDetailDialog(item: item),
-    );
-  }
-
-  void _proceedToBill() {
-    final billingProvider = context.read<BillingProvider>();
-    final validation = billingProvider.validateBill();
-
-    if (!validation['isValid']) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(validation['error']),
-          backgroundColor: Colors.red.shade600,
-        ),
-      );
-      return;
-    }
-
-    Navigator.pushNamed(context, '/billing/bill-preview');
   }
 }

@@ -304,47 +304,49 @@ class BillPrinterService {
 
     receipt.writeln('$margin${'-' * (paperWidth - 8)}');
 
-    // Table header - full width
+    // FIXED TABLE HEADER - Total width = 40 chars (3+18+8+4+7)
     receipt.writeln(
-      '$margin${'No'.padRight(4)}${'Item Name'.padRight(22)}${'Price'.padRight(10)}${'Qty'.padRight(6)}${'Value'.padLeft(6)}',
+      '$margin${'#'.padRight(3)}${'Item Name'.padRight(18)}${'Price'.padLeft(8)}${'Qty'.padLeft(4)}${'Total'.padLeft(7)}',
     );
     receipt.writeln('$margin${'-' * (paperWidth - 8)}');
 
-    // Items in table format - full width
+    // FIXED ITEMS - Consistent spacing and alignment
     for (final item in bill.items) {
       String itemName =
-          item.itemName.length > 21
-              ? '${item.itemName.substring(0, 18)}...'
-              : item.itemName.padRight(21);
+          item.itemName.length > 17
+              ? '${item.itemName.substring(0, 15)}...'
+              : item.itemName.padRight(18); // Fixed: should be 18, not 17
 
-      String itemNumber = item.itemNumber.toString().padRight(4);
-      String price = item.unitPrice.toStringAsFixed(2).padLeft(9);
-      String quantity = item.quantity.toString().padLeft(5);
-      String value = item.totalPrice.toStringAsFixed(2).padLeft(6);
+      String itemNumber = item.itemNumber.toString().padRight(3);
+      String price = item.unitPrice.toStringAsFixed(2).padLeft(8);
+      String quantity = item.quantity.toString().padLeft(4);
+      String total = item.totalPrice.toStringAsFixed(2).padLeft(7);
 
-      receipt.writeln('$margin$itemNumber $itemName $price $quantity $value');
+      receipt.writeln('$margin$itemNumber$itemName$price$quantity$total');
     }
 
     receipt.writeln('$margin${'-' * (paperWidth - 8)}');
 
-    // Totals
+    // FIXED TOTALS - Proper alignment with table width
+    const int totalSectionWidth = 40; // Same as table width (3+18+8+4+7)
+
     if (bill.discountAmount > 0) {
       receipt.writeln(
-        '$margin${'Subtotal:'.padRight(36)}${(bill.totalAmount + bill.discountAmount).toStringAsFixed(2).padLeft(8)}',
+        '$margin${'Subtotal:'.padLeft(totalSectionWidth - 8)}${(bill.totalAmount + bill.discountAmount).toStringAsFixed(2).padLeft(8)}',
       );
       receipt.writeln(
-        '$margin${'Discount:'.padRight(36)}-${bill.discountAmount.toStringAsFixed(2).padLeft(8)}',
+        '$margin${'Discount:'.padLeft(totalSectionWidth - 8)}${'-${bill.discountAmount.toStringAsFixed(2)}'.padLeft(8)}',
       );
     }
 
     if (bill.taxAmount > 0) {
       receipt.writeln(
-        '$margin${'Tax:'.padRight(36)}${bill.taxAmount.toStringAsFixed(2).padLeft(8)}',
+        '$margin${'Tax:'.padLeft(totalSectionWidth - 8)}${bill.taxAmount.toStringAsFixed(2).padLeft(8)}',
       );
     }
 
     receipt.writeln(
-      '$margin${'TOTAL:'.padRight(36)}Rs.${bill.finalAmount.toStringAsFixed(2).padLeft(8)}',
+      '$margin${'TOTAL:'.padLeft(totalSectionWidth - 11)}${'Rs.${bill.finalAmount.toStringAsFixed(2)}'.padLeft(11)}',
     );
     receipt.writeln('$margin${'-' * (paperWidth - 8)}');
     receipt.writeln();
@@ -389,14 +391,12 @@ class BillPrinterService {
     return '${' ' * padding}$text${' ' * (width - text.length - padding)}';
   }
 
-  // Generate ESC/POS formatted receipt bytes with proper margins - FIXED
-  // Generate ESC/POS formatted receipt bytes with 30-space separator
+  // FIXED ESC/POS formatted receipt with corrected table
   static List<int> _generateReceiptBytes(PrintBill bill) {
     List<int> bytes = [];
 
     // Margin configuration
-    const int paperWidthChars =
-        80; // Increased paper width to accommodate 30 spaces
+    const int paperWidthChars = 80; // Paper width
     const int leftMarginChars = 3;
     const int rightMarginChars = 3;
     const int contentWidth =
@@ -482,33 +482,24 @@ class BillPrinterService {
     bytes.addAll('\n'.codeUnits);
     bytes.addAll('\n'.codeUnits);
 
-    // Customer and Sales Rep details with 30-space separator
+    // Customer and Sales Rep details with your working spacing
     const int separatorWidth = 5;
-    final int availableWidth =
-        contentWidth - separatorWidth; // Remaining width for both sections
-    final int customerSectionWidth =
-        (availableWidth * 0.6).round(); // 60% of available width
-    final int repSectionWidth =
-        availableWidth - customerSectionWidth; // Remaining for rep
+    final int availableWidth = contentWidth - separatorWidth;
+    final int customerSectionWidth = (availableWidth * 0.6).round();
+    final int repSectionWidth = availableWidth - customerSectionWidth;
 
-    // Ensure minimum widths
     final int safeCustomerWidth =
         customerSectionWidth < 15 ? 15 : customerSectionWidth;
     final int safeRepWidth = repSectionWidth < 10 ? 10 : repSectionWidth;
 
-    // Calculate available space for actual content (excluding labels)
-    final int customerNameSpace =
-        safeCustomerWidth - 10; // "Customer: " = 10 chars
-    final int customerAddressSpace =
-        safeCustomerWidth - 9; // "Address: " = 9 chars
-    final int customerPhoneSpace = safeCustomerWidth - 7; // "Phone: " = 7 chars
-    final int repNameSpace = safeRepWidth - 5; // "Rep: " = 5 chars
-    final int repPhoneSpace = safeRepWidth - 7; // "Phone: " = 7 chars
+    final int customerNameSpace = safeCustomerWidth - 10;
+    final int customerAddressSpace = safeCustomerWidth - 9;
+    final int customerPhoneSpace = safeCustomerWidth - 7;
+    final int repNameSpace = safeRepWidth - 5;
+    final int repPhoneSpace = safeRepWidth - 7;
 
-    // Create separator string with 30 spaces
     final String separator = ' ' * separatorWidth;
 
-    // Truncate content to fit available space (allow longer text since we have more space)
     String customerName = safeTruncate(bill.customerName, customerNameSpace);
     String customerAddress = safeTruncate(
       bill.outletAddress,
@@ -553,35 +544,23 @@ class BillPrinterService {
     bytes.addAll(addTextMargin(getHorizontalLine()));
     bytes.addAll('\n'.codeUnits);
 
-    // Table header - optimized for wider content
+    // FIXED TABLE HEADER - Proper total width calculation
     bytes.addAll([ESC, 0x45, 0x01]); // Bold on
 
-    // Column widths optimized for wider paper
-    const int noWidth = 4; // 4 chars for item number
-    const int qtyWidth = 5; // 5 chars for quantity
-    const int priceWidth = 10; // 10 chars for price
-    const int valueWidth = 12; // 12 chars for value
-    final int nameWidth =
-        contentWidth -
-        noWidth -
-        priceWidth -
-        qtyWidth -
-        valueWidth -
-        4; // Remaining space
-
-    // Ensure nameWidth is positive
-    final int safeNameWidth = nameWidth > 10 ? nameWidth : 10;
+    // Fixed column widths that add up correctly
+    const int numWidth = 3; // # column
+    const int nameWidth = 18; // Item Name column
+    const int priceWidth = 8; // Price column
+    const int qtyWidth = 4; // Qty column
+    const int totalWidth = 7; // Total column
+    // Total table width = 3+18+8+4+7 = 40 characters
 
     String headerRow =
-        'No'.padRight(noWidth) +
-        ' ' +
-        'Item Name'.padRight(safeNameWidth) +
-        ' ' +
+        '#'.padRight(numWidth) +
+        'Item Name'.padRight(nameWidth) +
         'Price'.padLeft(priceWidth) +
-        ' ' +
         'Qty'.padLeft(qtyWidth) +
-        ' ' +
-        'Value'.padLeft(valueWidth);
+        'Total'.padLeft(totalWidth);
 
     bytes.addAll(addTextMargin(headerRow));
     bytes.addAll('\n'.codeUnits);
@@ -590,20 +569,19 @@ class BillPrinterService {
     bytes.addAll(addTextMargin(getHorizontalLine()));
     bytes.addAll('\n'.codeUnits);
 
-    // Items in table format
+    // FIXED TABLE ITEMS - Consistent with header alignment
     for (final item in bill.items) {
-      String itemName = safeTruncate(item.itemName, safeNameWidth);
+      String itemName = safeTruncate(
+        item.itemName,
+        nameWidth - 1,
+      ); // Leave space for padding
 
       String itemRow =
-          '${item.itemNumber}'.padRight(noWidth) +
-          ' ' +
-          itemName.padRight(safeNameWidth) +
-          ' ' +
+          '${item.itemNumber}'.padRight(numWidth) +
+          itemName.padRight(nameWidth) +
           '${item.unitPrice.toStringAsFixed(2)}'.padLeft(priceWidth) +
-          ' ' +
           '${item.quantity}'.padLeft(qtyWidth) +
-          ' ' +
-          '${item.totalPrice.toStringAsFixed(2)}'.padLeft(valueWidth);
+          '${item.totalPrice.toStringAsFixed(2)}'.padLeft(totalWidth);
 
       bytes.addAll(addTextMargin(itemRow));
       bytes.addAll('\n'.codeUnits);
@@ -612,24 +590,24 @@ class BillPrinterService {
     bytes.addAll(addTextMargin(getHorizontalLine()));
     bytes.addAll('\n'.codeUnits);
 
-    // Totals section with better spacing
-    final int labelWidth = (contentWidth * 0.75).round(); // 75% for label
-    final int amountWidth = contentWidth - labelWidth; // 25% for amount
+    // FIXED TOTALS - Aligned with table width (40 chars)
+    const int tableWidth =
+        numWidth + nameWidth + priceWidth + qtyWidth + totalWidth;
 
     if (bill.discountAmount > 0) {
       bytes.addAll(
         addTextMargin(
-          'Subtotal:'.padRight(labelWidth) +
+          'Subtotal:'.padLeft(tableWidth - 8) +
               '${(bill.totalAmount + bill.discountAmount).toStringAsFixed(2)}'
-                  .padLeft(amountWidth),
+                  .padLeft(8),
         ),
       );
       bytes.addAll('\n'.codeUnits);
 
       bytes.addAll(
         addTextMargin(
-          'Discount:'.padRight(labelWidth) +
-              '-${bill.discountAmount.toStringAsFixed(2)}'.padLeft(amountWidth),
+          'Discount:'.padLeft(tableWidth - 8) +
+              '-${bill.discountAmount.toStringAsFixed(2)}'.padLeft(8),
         ),
       );
       bytes.addAll('\n'.codeUnits);
@@ -638,19 +616,19 @@ class BillPrinterService {
     if (bill.taxAmount > 0) {
       bytes.addAll(
         addTextMargin(
-          'Tax:'.padRight(labelWidth) +
-              '${bill.taxAmount.toStringAsFixed(2)}'.padLeft(amountWidth),
+          'Tax:'.padLeft(tableWidth - 8) +
+              '${bill.taxAmount.toStringAsFixed(2)}'.padLeft(8),
         ),
       );
       bytes.addAll('\n'.codeUnits);
     }
 
-    // Total amount - bold
+    // Total amount - bold and properly aligned
     bytes.addAll([ESC, 0x45, 0x01]); // Bold on
     bytes.addAll(
       addTextMargin(
-        'TOTAL:'.padRight(labelWidth) +
-            'Rs.${bill.finalAmount.toStringAsFixed(2)}'.padLeft(amountWidth),
+        'TOTAL:'.padLeft(tableWidth - 11) +
+            'Rs.${bill.finalAmount.toStringAsFixed(2)}'.padLeft(11),
       ),
     );
     bytes.addAll('\n'.codeUnits);
@@ -661,12 +639,9 @@ class BillPrinterService {
     bytes.addAll('\n'.codeUnits);
 
     // Signature section with proper spacing
-    final int leftSignWidth =
-        (contentWidth * 0.4).round(); // 40% for customer signature
-    final int rightSignWidth =
-        (contentWidth * 0.4).round(); // 40% for rep signature
-    final int signSeparator =
-        contentWidth - leftSignWidth - rightSignWidth; // Remaining space
+    final int leftSignWidth = (contentWidth * 0.4).round();
+    final int rightSignWidth = (contentWidth * 0.4).round();
+    final int signSeparator = contentWidth - leftSignWidth - rightSignWidth;
 
     bytes.addAll(
       addTextMargin(
