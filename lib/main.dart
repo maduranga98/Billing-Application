@@ -139,7 +139,7 @@ class LumoraBizApp extends StatelessWidget {
           '/billing/outlet-selection':
               (context) => const OutletSelectionScreen(),
           '/billing/items': (context) => const ItemSelectionScreen(),
-          '/billing/bill-preview': (context) => const BillPreviewScreen(),
+          '/billing/preview': (context) => const BillPreviewScreen(),
           '/billing/success': (context) => const BillSuccessScreen(),
           // '/billing': (context) => const BillingScreen(),
           // '/reports': (context) => const ReportsScreen(),

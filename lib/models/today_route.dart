@@ -1,4 +1,7 @@
-// lib/models/today_route.dart
+// lib/models/today_route.dart (Updated with new parser)
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../utils/timestamp_parser.dart';
+
 class TodayRoute {
   final String routeId;
   final String name;
@@ -40,7 +43,10 @@ class TodayRoute {
       status: data['status'] ?? '',
       estimatedDistance: data['estimatedDistance']?.toDouble(),
       estimatedTime: data['estimatedTime']?.toDouble(),
-      createdAt: data['createdAt']?.toDate() ?? DateTime.now(),
+      createdAt: TimestampParser.parseTimestamp(
+        data['createdAt'],
+        context: 'TodayRoute',
+      ),
       createdBy: data['createdBy'] ?? '',
     );
   }

@@ -1,7 +1,7 @@
-// lib/models/loading.dart (Updated)
+// lib/models/loading.dart (Updated with new parser)
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
-
+import '../utils/timestamp_parser.dart';
 import 'loading_item.dart';
 import 'today_route.dart';
 
@@ -23,6 +23,9 @@ class Loading {
   final TodayRoute? todayRoute;
   final DateTime createdAt;
   final String createdBy;
+  // Additional fields from your data
+  final String? paddyPriceDate;
+  final Map<String, String>? todayPaddyPrices;
 
   Loading({
     required this.loadingId,
@@ -42,12 +45,18 @@ class Loading {
     this.todayRoute,
     required this.createdAt,
     required this.createdBy,
+    this.paddyPriceDate,
+    this.todayPaddyPrices,
   });
 
   factory Loading.fromFirestore(Map<String, dynamic> data, String id) {
     try {
+      print('Parsing Loading from Firestore with ID: $id');
+
       // Handle items array - could be empty or null
       final itemsData = data['items'] as List<dynamic>? ?? [];
+      print('Found ${itemsData.length} items in loading data');
+
       final items =
           itemsData
               .map((item) => LoadingItem.fromMap(item as Map<String, dynamic>))
@@ -56,10 +65,26 @@ class Loading {
       // Handle todayRoute - could be null or a map
       TodayRoute? todayRoute;
       if (data['todayRoute'] != null && data['todayRoute'] is Map) {
+        print('Parsing todayRoute from data');
         todayRoute = TodayRoute.fromMap(
           data['todayRoute'] as Map<String, dynamic>,
         );
       }
+
+      // Handle todayPaddyPrices
+      Map<String, String>? paddyPrices;
+      if (data['todayPaddyPrices'] != null && data['todayPaddyPrices'] is Map) {
+        final pricesMap = data['todayPaddyPrices'] as Map<String, dynamic>;
+        paddyPrices = pricesMap.map(
+          (key, value) => MapEntry(key, value.toString()),
+        );
+      }
+
+      print('Parsing createdAt timestamp: ${data['createdAt']}');
+      final createdAt = TimestampParser.parseTimestamp(
+        data['createdAt'],
+        context: 'Loading',
+      );
 
       return Loading(
         loadingId: id, // Use document ID as loadingId
@@ -77,8 +102,10 @@ class Loading {
         totalWeight: _parseDouble(data['totalWeight']),
         items: items,
         todayRoute: todayRoute,
-        createdAt: _parseTimestamp(data['createdAt']),
+        createdAt: createdAt,
         createdBy: data['createdBy'] ?? '',
+        paddyPriceDate: data['paddyPriceDate'],
+        todayPaddyPrices: paddyPrices,
       );
     } catch (e) {
       print('Error parsing Loading from Firestore: $e');
@@ -104,6 +131,13 @@ class Loading {
         todayRoute = TodayRoute.fromMap(routeJson as Map<String, dynamic>);
       }
 
+      // Parse todayPaddyPrices from JSON string
+      Map<String, String>? paddyPrices;
+      if (data['today_paddy_prices'] != null) {
+        final pricesJson = jsonDecode(data['today_paddy_prices'] as String);
+        paddyPrices = Map<String, String>.from(pricesJson);
+      }
+
       return Loading(
         loadingId: data['loading_id'],
         businessId: data['business_id'],
@@ -122,6 +156,8 @@ class Loading {
         todayRoute: todayRoute,
         createdAt: DateTime.fromMillisecondsSinceEpoch(data['created_at']),
         createdBy: data['created_by'],
+        paddyPriceDate: data['paddy_price_date'],
+        todayPaddyPrices: paddyPrices,
       );
     } catch (e) {
       print('Error parsing Loading from SQLite: $e');
@@ -149,6 +185,9 @@ class Loading {
           todayRoute != null ? jsonEncode(todayRoute!.toMap()) : null,
       'created_at': createdAt.millisecondsSinceEpoch,
       'created_by': createdBy,
+      'paddy_price_date': paddyPriceDate,
+      'today_paddy_prices':
+          todayPaddyPrices != null ? jsonEncode(todayPaddyPrices) : null,
       'sync_status': 'synced',
     };
   }
@@ -168,14 +207,6 @@ class Loading {
     if (value is double) return value.toInt();
     if (value is String) return int.tryParse(value) ?? 0;
     return 0;
-  }
-
-  static DateTime _parseTimestamp(dynamic value) {
-    if (value == null) return DateTime.now();
-    if (value is Timestamp) return value.toDate();
-    if (value is DateTime) return value;
-    if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
-    return DateTime.now();
   }
 
   // Get available items for billing (all items are available)
@@ -214,6 +245,16 @@ class Loading {
   // Get total available value
   double get totalAvailableValue {
     return totalValue;
+  }
+
+  // Get paddy prices display text
+  String get paddyPricesText {
+    if (todayPaddyPrices == null || todayPaddyPrices!.isEmpty) {
+      return 'No prices set';
+    }
+    return todayPaddyPrices!.entries
+        .map((entry) => '${entry.key}: Rs.${entry.value}')
+        .join(', ');
   }
 
   @override

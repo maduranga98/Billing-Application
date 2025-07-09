@@ -1,4 +1,3 @@
-// lib/services/loading/loading_service.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import '../../models/loading.dart';
@@ -65,15 +64,16 @@ class LoadingService {
       print('Found loading document: ${doc.id}');
       print('Document data keys: ${data.keys.toList()}');
 
-      // Create loading with proper document ID
+      // Create loading with proper document ID - this handles all fields automatically
       final loading = Loading.fromFirestore(data, doc.id);
 
-      // Load route information if routeId exists
+      // If no todayRoute in the loading data, try to fetch it separately
       Loading updatedLoading = loading;
-      if (loading.routeId.isNotEmpty) {
+      if (loading.todayRoute == null && loading.routeId.isNotEmpty) {
         print('Loading route info for routeId: ${loading.routeId}');
         final route = await getRouteInfo(session, loading.routeId);
         if (route != null) {
+          // Create new Loading with the fetched route
           updatedLoading = Loading(
             loadingId: loading.loadingId,
             businessId: loading.businessId,
@@ -89,9 +89,11 @@ class LoadingService {
             totalValue: loading.totalValue,
             totalWeight: loading.totalWeight,
             items: loading.items,
-            todayRoute: route,
+            todayRoute: route, // Use the fetched route
             createdAt: loading.createdAt,
             createdBy: loading.createdBy,
+            paddyPriceDate: loading.paddyPriceDate,
+            todayPaddyPrices: loading.todayPaddyPrices,
           );
         }
       }
@@ -177,7 +179,9 @@ class LoadingService {
         return item.displayName.toLowerCase().contains(lowerQuery) ||
             item.productCode.toLowerCase().contains(lowerQuery) ||
             item.productType.toLowerCase().contains(lowerQuery) ||
-            (item.riceType?.toLowerCase().contains(lowerQuery) ?? false);
+            (item.riceType?.toLowerCase().contains(lowerQuery) ?? false) ||
+            (item.sourceBatchNumber?.toLowerCase().contains(lowerQuery) ??
+                false);
       }).toList();
     } catch (e) {
       print('Error searching items: $e');
@@ -205,19 +209,7 @@ class LoadingService {
 
       final item = loading.items.firstWhere(
         (item) => item.productCode == productCode,
-        orElse:
-            () => LoadingItem(
-              bagQuantity: 0,
-              bagSize: 0,
-              bagsCount: 0,
-              bagsUsed: [],
-              displayName: '',
-              pricePerKg: 0.0,
-              productCode: '',
-              productType: '',
-              totalValue: 0.0,
-              totalWeight: 0.0,
-            ),
+        orElse: () => _createEmptyLoadingItem(),
       );
 
       return item.productCode.isNotEmpty &&
@@ -226,6 +218,25 @@ class LoadingService {
       print('Error checking quantity: $e');
       return false;
     }
+  }
+
+  // Helper method to create empty LoadingItem for orElse cases
+  static LoadingItem _createEmptyLoadingItem() {
+    return LoadingItem(
+      bagQuantity: 0,
+      bagSize: 0,
+      bagsCount: 0,
+      bagsUsed: [],
+      displayName: '',
+      itemName: '',
+      maxPrice: 0.0,
+      minPrice: 0.0,
+      pricePerKg: 0.0,
+      productCode: '',
+      productType: '',
+      totalValue: 0.0,
+      totalWeight: 0.0,
+    );
   }
 
   // Validate items before bill creation (updated for bag-based system)
@@ -358,6 +369,102 @@ class LoadingService {
     } catch (e) {
       print('Error updating Firebase bag quantities: $e');
       throw e;
+    }
+  }
+
+  // Get loading by ID (useful for specific loading operations)
+  static Future<Loading?> getLoadingById({
+    required UserSession session,
+    required String loadingId,
+  }) async {
+    try {
+      final DocumentSnapshot doc =
+          await _firestore
+              .collection('owners')
+              .doc(session.ownerId)
+              .collection('businesses')
+              .doc(session.businessId)
+              .collection('loadings')
+              .doc(loadingId)
+              .get();
+
+      if (doc.exists) {
+        final data = doc.data() as Map<String, dynamic>;
+        return Loading.fromFirestore(data, doc.id);
+      }
+      return null;
+    } catch (e) {
+      print('Error getting loading by ID: $e');
+      return null;
+    }
+  }
+
+  // Get loading summary for display
+  static Future<Map<String, dynamic>> getLoadingSummary(
+    UserSession session,
+  ) async {
+    try {
+      final loading = await getTodaysLoading(session);
+      if (loading == null) {
+        return {
+          'hasLoading': false,
+          'message': 'No loading prepared for today',
+        };
+      }
+
+      return {
+        'hasLoading': true,
+        'loadingId': loading.loadingId,
+        'routeName': loading.routeDisplayName,
+        'itemCount': loading.itemCount,
+        'totalBags': loading.totalBags,
+        'totalValue': loading.totalValue,
+        'totalWeight': loading.totalWeight,
+        'status': loading.status,
+        'paddyPricesText': loading.paddyPricesText,
+        'routeAreasText': loading.routeAreasText,
+        'isReadyForSales': loading.isReadyForSales,
+      };
+    } catch (e) {
+      print('Error getting loading summary: $e');
+      return {'hasLoading': false, 'message': 'Error loading data: $e'};
+    }
+  }
+
+  // Search items by batch number
+  static Future<List<LoadingItem>> searchItemsByBatch({
+    required UserSession session,
+    required String batchNumber,
+  }) async {
+    try {
+      final loading = await getTodaysLoading(session);
+      if (loading == null) return [];
+
+      return loading.items.where((item) {
+        return item.sourceBatchNumber?.toLowerCase() ==
+            batchNumber.toLowerCase();
+      }).toList();
+    } catch (e) {
+      print('Error searching items by batch: $e');
+      return [];
+    }
+  }
+
+  // Get items by rice type
+  static Future<List<LoadingItem>> getItemsByRiceType({
+    required UserSession session,
+    required String riceType,
+  }) async {
+    try {
+      final loading = await getTodaysLoading(session);
+      if (loading == null) return [];
+
+      return loading.items.where((item) {
+        return item.riceType?.toLowerCase() == riceType.toLowerCase();
+      }).toList();
+    } catch (e) {
+      print('Error getting items by rice type: $e');
+      return [];
     }
   }
 }
