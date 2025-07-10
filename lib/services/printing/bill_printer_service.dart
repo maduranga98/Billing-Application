@@ -1,12 +1,18 @@
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
+import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import 'package:intl/intl.dart';
 import '../../models/print_bill.dart';
 
 class BillPrinterService {
   static BluetoothInfo? _selectedDevice;
   static bool _isConnected = false;
+  static CapabilityProfile? _profile;
+  static Generator? _generator;
+
+  // Updated to 64 character width
+  static const int RECEIPT_WIDTH = 64;
 
   // Get current connected device
   static BluetoothInfo? get selectedDevice => _selectedDevice;
@@ -17,6 +23,25 @@ class BillPrinterService {
     symbol: 'Rs. ',
     decimalDigits: 2,
   );
+
+  // Initialize printer profile and generator
+  static Future<void> _initializePrinter({
+    PaperSize paperSize = PaperSize.mm80,
+  }) async {
+    try {
+      // Load capability profile for better printer support
+      _profile = await CapabilityProfile.load();
+
+      // For 4-inch (103mm) paper, use mm80 as base but adjust layout
+      _generator = Generator(paperSize, _profile!);
+      print('Printer initialized with ${paperSize.toString()} paper size');
+    } catch (e) {
+      print('Error initializing printer: $e');
+      // Fallback to default profile
+      _profile = await CapabilityProfile.load();
+      _generator = Generator(PaperSize.mm80, _profile!);
+    }
+  }
 
   // Check if Bluetooth is available and enabled
   static Future<bool> isBluetoothAvailable() async {
@@ -54,9 +79,15 @@ class BillPrinterService {
   }
 
   // Connect to a specific device
-  static Future<bool> connectToDevice(BluetoothInfo device) async {
+  static Future<bool> connectToDevice(
+    BluetoothInfo device, {
+    PaperSize paperSize = PaperSize.mm80,
+  }) async {
     try {
       print('Attempting to connect to ${device.name} (${device.macAdress})');
+
+      // Initialize printer first
+      await _initializePrinter(paperSize: paperSize);
 
       // Check if already connected
       final currentStatus = await PrintBluetoothThermal.connectionStatus;
@@ -113,6 +144,8 @@ class BillPrinterService {
     } finally {
       _selectedDevice = null;
       _isConnected = false;
+      _generator = null;
+      _profile = null;
       print('Printer state cleared');
     }
   }
@@ -127,6 +160,8 @@ class BillPrinterService {
         _isConnected = status;
         if (!status) {
           _selectedDevice = null;
+          _generator = null;
+          _profile = null;
         }
       }
 
@@ -137,13 +172,11 @@ class BillPrinterService {
     }
   }
 
-  // Print bill receipt - main method
-  static Future<bool> printBill(PrintBill bill) async {
-    return await printBillFormatted(bill);
-  }
-
-  // Print bill with ESC/POS commands for better formatting
-  static Future<bool> printBillFormatted(PrintBill bill) async {
+  // Print bill receipt - main method using esc_pos_utils_plus
+  static Future<bool> printBill(
+    PrintBill bill, {
+    PaperSize paperSize = PaperSize.mm80,
+  }) async {
     try {
       // Check connection
       final connected = await isDeviceConnected();
@@ -151,29 +184,275 @@ class BillPrinterService {
         throw Exception('Printer not connected');
       }
 
-      print('Generating formatted receipt for bill ${bill.billNumber}');
+      // Ensure generator is initialized
+      if (_generator == null) {
+        await _initializePrinter(paperSize: paperSize);
+      }
 
-      // Generate receipt using ESC/POS commands
-      final List<int> bytes = _generateReceiptBytes(bill);
+      print('Generating optimized receipt for bill ${bill.billNumber}');
+
+      // Generate receipt using esc_pos_utils_plus
+      final List<int> bytes = _generateOptimizedReceipt(bill);
 
       // Print the receipt
       final bool result = await PrintBluetoothThermal.writeBytes(bytes);
 
       if (result) {
-        print('Formatted bill printed successfully');
+        print('Optimized bill printed successfully');
         return true;
       } else {
-        print('Formatted print failed');
+        print('Print failed');
         return false;
       }
     } catch (e) {
-      print('Error printing formatted bill: $e');
+      print('Error printing bill: $e');
       return false;
     }
   }
 
-  // Print bill using text format (fallback)
-  static Future<bool> printBillText(PrintBill bill) async {
+  // Replace the _generateOptimizedBill method in your BillPrinterService class
+
+  // Generate optimized bill with 68-character paper width (64 content + 4 margins)
+  static List<int> _generateOptimizedReceipt(PrintBill bill) {
+    List<int> bytes = [];
+
+    // Paper specifications:
+    // Total paper width: 68 characters
+    // Left margin: 2 characters
+    // Right margin: 2 characters
+    // Content width: 64 characters
+    const int totalPaperWidth = 68;
+    const int leftMargin = 2;
+    const int rightMargin = 2;
+    const int contentWidth =
+        totalPaperWidth - leftMargin - rightMargin; // 64 chars
+
+    // Separators for different sections
+    final String mainSeparator = '=' * contentWidth; // 64 chars
+    final String lightSeparator = '-' * contentWidth; // 64 chars
+    final String dottedSeparator = '.' * contentWidth; // 64 chars
+
+    // Helper function to add left margin
+    String addMargin(String text) {
+      return ' ' * leftMargin + text;
+    }
+
+    // Helper function for centered text with margins
+    String centerWithMargin(String text) {
+      if (text.length >= contentWidth) {
+        return addMargin(text.substring(0, contentWidth));
+      }
+
+      int padding = (contentWidth - text.length) ~/ 2;
+      String centeredText =
+          ' ' * padding + text + ' ' * (contentWidth - text.length - padding);
+      return addMargin(centeredText);
+    }
+
+    // Top spacing
+    bytes += _generator!.feed(1);
+
+    // === HEADER SECTION ===
+    bytes += _generator!.text(
+      centerWithMargin('LUMORA BUSINESS'),
+      styles: const PosStyles(bold: true, height: PosTextSize.size2),
+    );
+
+    bytes += _generator!.text(
+      centerWithMargin('No. 123, Main Street, Colombo, Sri Lanka'),
+    );
+
+    bytes += _generator!.text(centerWithMargin('Tel: +94 11 123 4567'));
+
+    bytes += _generator!.text(addMargin(mainSeparator));
+    bytes += _generator!.feed(1);
+
+    // === BILL INFORMATION ===
+    bytes += _generator!.text(
+      addMargin('Bill No: LB${bill.billNumber}'),
+      styles: const PosStyles(bold: true),
+    );
+
+    bytes += _generator!.text(
+      addMargin(
+        'Date: ${DateFormat('dd/MM/yyyy HH:mm').format(bill.billDate)}',
+      ),
+    );
+
+    bytes += _generator!.feed(1);
+
+    // === CUSTOMER AND SALES REP INFORMATION IN ROWS ===
+    // Row 1: Customer Name and Sales Rep Name
+    String customerName = _truncateText(bill.customerName, 30);
+    String repName = _truncateText(bill.salesRepName, 30);
+    String row1 = 'Customer: $customerName'.padRight(32) + 'Rep: $repName';
+    bytes += _generator!.text(addMargin(row1));
+
+    // Row 2: Customer Address and Rep Phone (if available)
+    if (bill.outletAddress.isNotEmpty || bill.salesRepPhone.isNotEmpty) {
+      String customerAddress =
+          bill.outletAddress.isNotEmpty
+              ? _truncateText(bill.outletAddress, 28)
+              : '';
+      String repPhone = bill.salesRepPhone.isNotEmpty ? bill.salesRepPhone : '';
+
+      String addressLabel =
+          customerAddress.isNotEmpty ? 'Address: $customerAddress' : '';
+      String phoneLabel = repPhone.isNotEmpty ? 'Phone: $repPhone' : '';
+
+      String row2 = addressLabel.padRight(32) + phoneLabel;
+      if (addressLabel.isNotEmpty || phoneLabel.isNotEmpty) {
+        bytes += _generator!.text(addMargin(row2));
+      }
+    }
+
+    // Row 3: Customer Phone (if available)
+    if (bill.outletPhone.isNotEmpty) {
+      String row3 = 'Phone: ${bill.outletPhone}';
+      bytes += _generator!.text(addMargin(row3));
+    }
+
+    bytes += _generator!.text(addMargin(mainSeparator));
+    bytes += _generator!.feed(1);
+
+    // === ITEMS TABLE ===
+    // Table layout for 64-character content width:
+    // Item Name: 32 chars | Price: 10 chars | Qty: 6 chars | Total: 10 chars = 58 chars
+    // Remaining 6 chars for spacing between columns
+
+    // Table header
+    String headerRow =
+        'Item Name'.padRight(32) +
+        'Price'.padLeft(10) +
+        'Qty'.padLeft(8) +
+        'Total'.padLeft(10);
+
+    bytes += _generator!.text(
+      addMargin(headerRow),
+      styles: const PosStyles(bold: true, underline: true),
+    );
+
+    bytes += _generator!.text(addMargin(lightSeparator));
+
+    // Items
+    for (int i = 0; i < bill.items.length; i++) {
+      final item = bill.items[i];
+
+      // Format item name with item number
+      String itemDisplayName = '${i + 1}. ${item.itemName}';
+      String truncatedName = _truncateText(itemDisplayName, 32).padRight(32);
+
+      String itemRow =
+          truncatedName +
+          item.unitPrice.toStringAsFixed(2).padLeft(10) +
+          item.quantity.toString().padLeft(8) +
+          item.totalPrice.toStringAsFixed(2).padLeft(10);
+
+      bytes += _generator!.text(addMargin(itemRow));
+    }
+
+    bytes += _generator!.text(addMargin(lightSeparator));
+    bytes += _generator!.feed(1);
+
+    // === TOTALS SECTION ===
+    // Right-aligned totals
+    if (bill.discountAmount > 0) {
+      String subtotalLine =
+          'Subtotal: Rs. ${(bill.totalAmount + bill.discountAmount).toStringAsFixed(2)}';
+      bytes += _generator!.text(addMargin(subtotalLine.padLeft(contentWidth)));
+
+      String discountLine =
+          'Discount: Rs. -${bill.discountAmount.toStringAsFixed(2)}';
+      bytes += _generator!.text(addMargin(discountLine.padLeft(contentWidth)));
+    }
+
+    if (bill.taxAmount > 0) {
+      String taxLine = 'Tax: Rs. ${bill.taxAmount.toStringAsFixed(2)}';
+      bytes += _generator!.text(addMargin(taxLine.padLeft(contentWidth)));
+    }
+
+    // Grand total with emphasis
+    String totalLine = 'TOTAL: Rs. ${bill.finalAmount.toStringAsFixed(2)}';
+    bytes += _generator!.text(
+      addMargin(totalLine.padLeft(contentWidth)),
+      styles: const PosStyles(bold: true, height: PosTextSize.size2),
+    );
+
+    bytes += _generator!.text(addMargin(mainSeparator));
+    bytes += _generator!.feed(1);
+
+    // === PAYMENT INFORMATION ===
+    bytes += _generator!.text(
+      addMargin('Payment Method: ${bill.paymentType.toUpperCase()}'),
+      styles: const PosStyles(bold: true),
+    );
+
+    bytes += _generator!.feed(2);
+
+    // === SIGNATURE SECTION ===
+    // Signature lines only
+    String signatureLine = '${'_' * 30}      ${'_' * 30}';
+    bytes += _generator!.text(addMargin(signatureLine));
+    bytes += _generator!.feed(1);
+
+    // === DOTTED SEPARATOR ===
+    bytes += _generator!.text(addMargin(dottedSeparator));
+    bytes += _generator!.feed(1);
+
+    // === SIGNATURE LABELS (Below dotted line) ===
+    String signatureLabels =
+        'Customer Signature'.padRight(32) + 'Sales Rep Signature';
+    bytes += _generator!.text(addMargin(signatureLabels));
+    bytes += _generator!.feed(2);
+
+    // === FOOTER (Below dotted line) ===
+    bytes += _generator!.text(
+      centerWithMargin('Thank you for your business!'),
+      styles: const PosStyles(bold: true),
+    );
+
+    bytes += _generator!.feed(1);
+
+    // === SOLUTION BY SECTION (Below dotted line) ===
+    bytes += _generator!.text(
+      centerWithMargin('Solution by Lumora Ventures Pvt Ltd'),
+    );
+
+    bytes += _generator!.text(centerWithMargin('Mobile: +94 76 620 6555'));
+
+    // Bottom spacing and cut
+    bytes += _generator!.feed(3);
+    bytes += _generator!.cut();
+
+    return bytes;
+  }
+
+  // Update the PAPER_CONFIGS to include your specific configuration
+  static const Map<String, Map<String, dynamic>> PAPER_CONFIGS = {
+    '58mm': {
+      'width': 32,
+      'description': '2.3" thermal paper',
+      'paperSize': PaperSize.mm58,
+    },
+    '80mm': {
+      'width': 42,
+      'description': '3.1" thermal paper',
+      'paperSize': PaperSize.mm80,
+    },
+    '104mm (68 chars)': {
+      'width': 68,
+      'description': '4.1" thermal paper - 68 total, 64 content',
+      'paperSize': PaperSize.mm80,
+    },
+    '112mm': {
+      'width': 64,
+      'description': '4.4" thermal paper',
+      'paperSize': PaperSize.mm80,
+    },
+  };
+
+  // Test print functionality using esc_pos_utils_plus
+  static Future<bool> testPrint({PaperSize paperSize = PaperSize.mm80}) async {
     try {
       // Check connection
       final connected = await isDeviceConnected();
@@ -181,44 +460,16 @@ class BillPrinterService {
         throw Exception('Printer not connected');
       }
 
-      print('Generating text receipt for bill ${bill.billNumber}');
-
-      // Generate receipt using formatted text
-      final String receiptText = _generateReceiptText(bill);
-
-      // Convert string to bytes and print
-      final List<int> bytes = receiptText.codeUnits;
-      final bool result = await PrintBluetoothThermal.writeBytes(bytes);
-
-      if (result) {
-        print('Text bill printed successfully');
-        return true;
-      } else {
-        print('Text print failed');
-        return false;
-      }
-    } catch (e) {
-      print('Error printing text bill: $e');
-      return false;
-    }
-  }
-
-  // Test print functionality
-  static Future<bool> testPrint() async {
-    try {
-      // Check connection
-      final connected = await isDeviceConnected();
-      if (!connected) {
-        throw Exception('Printer not connected');
+      // Ensure generator is initialized
+      if (_generator == null) {
+        await _initializePrinter(paperSize: paperSize);
       }
 
       print('Performing test print');
 
-      // Generate test receipt
-      final String testText = _generateTestReceipt();
+      // Generate test receipt using esc_pos_utils_plus
+      final List<int> bytes = _generateTestReceipt();
 
-      // Convert string to bytes and print
-      final List<int> bytes = testText.codeUnits;
       final bool result = await PrintBluetoothThermal.writeBytes(bytes);
 
       if (result) {
@@ -234,501 +485,175 @@ class BillPrinterService {
     }
   }
 
-  // Generate simple text receipt
-  static String _generateReceiptText(PrintBill bill) {
-    final StringBuffer receipt = StringBuffer();
-    const int paperWidth = 48; // 104mm paper width in characters
-    const String margin = '    '; // 4-space margin for left and right
-
-    // Company Header - Centered
-    receipt.writeln('$margin${'=' * (paperWidth - 8)}');
-    receipt.writeln('$margin${_centerText('LUMORA BUSINESS', paperWidth - 8)}');
-    receipt.writeln(
-      '$margin${_centerText('No. 123, Main Street', paperWidth - 8)}',
-    );
-    receipt.writeln(
-      '$margin${_centerText('Colombo, Sri Lanka', paperWidth - 8)}',
-    );
-    receipt.writeln(
-      '$margin${_centerText('Tel: +94 11 123 4567', paperWidth - 8)}',
-    );
-    receipt.writeln('$margin${'=' * (paperWidth - 8)}');
-    receipt.writeln();
-
-    // Bill details
-    receipt.writeln('${margin}Bill No: ${bill.billNumber}');
-    receipt.writeln(
-      '${margin}Date: ${DateFormat('dd/MM/yyyy').format(bill.billDate)}',
-    );
-    receipt.writeln(
-      '${margin}Time: ${DateFormat('HH:mm:ss').format(bill.billDate)}',
-    );
-    receipt.writeln();
-    receipt.writeln();
-
-    // Customer and Sales Rep details in side-by-side format with more space
-    String customerName =
-        bill.customerName.length > 20
-            ? '${bill.customerName.substring(0, 17)}...'
-            : bill.customerName.padRight(20);
-    String repName =
-        bill.salesRepName.length > 20
-            ? '${bill.salesRepName.substring(0, 17)}...'
-            : bill.salesRepName.padRight(20);
-
-    receipt.writeln(
-      '$margin${'Customer:'.padRight(10)}$customerName  ${'Rep:'.padRight(6)}$repName',
-    );
-
-    if (bill.outletAddress.isNotEmpty || bill.salesRepPhone.isNotEmpty) {
-      String address =
-          bill.outletAddress.length > 20
-              ? '${bill.outletAddress.substring(0, 17)}...'
-              : bill.outletAddress.padRight(20);
-      String repPhone =
-          bill.salesRepPhone.length > 20
-              ? '${bill.salesRepPhone.substring(0, 17)}...'
-              : bill.salesRepPhone.padRight(20);
-
-      receipt.writeln(
-        '$margin${'Address:'.padRight(10)}$address  ${'Phone:'.padRight(6)}$repPhone',
-      );
+  // Generate test receipt using esc_pos_utils_plus - optimized for 64 chars
+  static List<int> _generateTestReceipt() {
+    if (_generator == null) {
+      throw Exception('Generator not initialized');
     }
 
-    if (bill.outletPhone.isNotEmpty) {
-      receipt.writeln('$margin${'Phone:'.padRight(10)}${bill.outletPhone}');
-    }
-    receipt.writeln();
-    receipt.writeln();
-    receipt.writeln();
-
-    receipt.writeln('$margin${'-' * (paperWidth - 8)}');
-
-    // FIXED TABLE HEADER - Total width = 40 chars (3+18+8+4+7)
-    receipt.writeln(
-      '$margin${'#'.padRight(3)}${'Item Name'.padRight(18)}${'Price'.padLeft(8)}${'Qty'.padLeft(4)}${'Total'.padLeft(7)}',
-    );
-    receipt.writeln('$margin${'-' * (paperWidth - 8)}');
-
-    // FIXED ITEMS - Consistent spacing and alignment
-    for (final item in bill.items) {
-      String itemName =
-          item.itemName.length > 17
-              ? '${item.itemName.substring(0, 15)}...'
-              : item.itemName.padRight(18); // Fixed: should be 18, not 17
-
-      String itemNumber = item.itemNumber.toString().padRight(3);
-      String price = item.unitPrice.toStringAsFixed(2).padLeft(8);
-      String quantity = item.quantity.toString().padLeft(4);
-      String total = item.totalPrice.toStringAsFixed(2).padLeft(7);
-
-      receipt.writeln('$margin$itemNumber$itemName$price$quantity$total');
-    }
-
-    receipt.writeln('$margin${'-' * (paperWidth - 8)}');
-
-    // FIXED TOTALS - Proper alignment with table width
-    const int totalSectionWidth = 40; // Same as table width (3+18+8+4+7)
-
-    if (bill.discountAmount > 0) {
-      receipt.writeln(
-        '$margin${'Subtotal:'.padLeft(totalSectionWidth - 8)}${(bill.totalAmount + bill.discountAmount).toStringAsFixed(2).padLeft(8)}',
-      );
-      receipt.writeln(
-        '$margin${'Discount:'.padLeft(totalSectionWidth - 8)}${'-${bill.discountAmount.toStringAsFixed(2)}'.padLeft(8)}',
-      );
-    }
-
-    if (bill.taxAmount > 0) {
-      receipt.writeln(
-        '$margin${'Tax:'.padLeft(totalSectionWidth - 8)}${bill.taxAmount.toStringAsFixed(2).padLeft(8)}',
-      );
-    }
-
-    receipt.writeln(
-      '$margin${'TOTAL:'.padLeft(totalSectionWidth - 11)}${'Rs.${bill.finalAmount.toStringAsFixed(2)}'.padLeft(11)}',
-    );
-    receipt.writeln('$margin${'-' * (paperWidth - 8)}');
-    receipt.writeln();
-    receipt.writeln();
-
-    // Signature section - side by side format
-    receipt.writeln(
-      '$margin${'Customer Signature:'.padRight(25)}${'Sales Rep Signature:'.padRight(19)}',
-    );
-    receipt.writeln(
-      '$margin${'___________________'.padRight(25)}${'___________________'.padRight(19)}',
-    );
-    receipt.writeln();
-    receipt.writeln();
-
-    // Thank you message
-    receipt.writeln(
-      '$margin${_centerText('Thank you for your business!', paperWidth - 8)}',
-    );
-    receipt.writeln();
-    receipt.writeln('$margin${'-' * (paperWidth - 8)}');
-
-    // Solution by section
-    receipt.writeln('$margin${_centerText('Solution by', paperWidth - 8)}');
-    receipt.writeln(
-      '$margin${_centerText('Lumora Ventures Pvt Ltd', paperWidth - 8)}',
-    );
-    receipt.writeln(
-      '$margin${_centerText('Mobile: +94 76 620 6555', paperWidth - 8)}',
-    );
-    receipt.writeln();
-    receipt.writeln();
-    receipt.writeln();
-
-    return receipt.toString();
-  }
-
-  // Helper method to center text
-  static String _centerText(String text, int width) {
-    if (text.length >= width) return text;
-    int padding = (width - text.length) ~/ 2;
-    return '${' ' * padding}$text${' ' * (width - text.length - padding)}';
-  }
-
-  // FIXED ESC/POS formatted receipt with corrected table
-  static List<int> _generateReceiptBytes(PrintBill bill) {
     List<int> bytes = [];
 
-    // Margin configuration
-    const int paperWidthChars = 80; // Paper width
-    const int leftMarginChars = 3;
-    const int rightMarginChars = 3;
-    const int contentWidth =
-        paperWidthChars - leftMarginChars - rightMarginChars;
-
-    // Convert margins to dots (8 dots per character for most thermal printers)
-    const int leftMarginDots = leftMarginChars * 8;
-
-    // Create margin strings for text-based approach
-    final String leftMarginText = ' ' * leftMarginChars;
-
-    // ESC/POS commands
-    const ESC = 0x1B;
-    const GS = 0x1D;
-
-    // Initialize printer
-    bytes.addAll([ESC, 0x40]);
-
-    // Method 1: Try ESC/POS margin commands
-    bytes.addAll([ESC, 0x6C, leftMarginDots]); // Set left margin
-
-    // Method 2: Set print area width (creates right margin effect)
-    final int printAreaDots = contentWidth * 8;
-    bytes.addAll([GS, 0x57, printAreaDots & 0xFF, (printAreaDots >> 8) & 0xFF]);
-
-    // Helper function to add text margins manually (fallback)
-    List<int> addTextMargin(String text) {
-      return '$leftMarginText$text'.codeUnits;
-    }
-
-    // Helper function for horizontal lines with proper width
-    String getHorizontalLine() {
-      return '-' * contentWidth;
-    }
-
-    // Helper function for safe string truncation
-    String safeTruncate(String text, int maxLength, {String suffix = '...'}) {
-      if (maxLength <= 0) return '';
-      if (text.length <= maxLength) return text;
-      if (maxLength <= suffix.length) return text.substring(0, maxLength);
-      return '${text.substring(0, maxLength - suffix.length)}$suffix';
-    }
-
-    // Set center alignment for company header
-    bytes.addAll([ESC, 0x61, 0x01]);
-
-    // Company header - bold and larger
-    bytes.addAll([ESC, 0x45, 0x01]); // Bold on
-    bytes.addAll([GS, 0x21, 0x11]); // Double height and width
-
-    // For headers, use text margins as ESC/POS margins might not work with center alignment
-    bytes.addAll(addTextMargin('Sajith Rice Mill'));
-    bytes.addAll('\n'.codeUnits);
-    bytes.addAll([GS, 0x21, 0x00]); // Normal size
-    bytes.addAll([ESC, 0x45, 0x00]); // Bold off
-
-    // Company details with text margins
-    bytes.addAll(addTextMargin('No. 123, Main Street'));
-    bytes.addAll('\n'.codeUnits);
-    bytes.addAll(addTextMargin('Colombo, Sri Lanka'));
-    bytes.addAll('\n'.codeUnits);
-    bytes.addAll(addTextMargin('Tel: +94 11 123 4567'));
-    bytes.addAll('\n'.codeUnits);
-    bytes.addAll('\n'.codeUnits);
-
-    // Horizontal line with proper width
-    bytes.addAll(addTextMargin(getHorizontalLine()));
-    bytes.addAll('\n'.codeUnits);
-
-    // Set left alignment for bill details
-    bytes.addAll([ESC, 0x61, 0x00]);
-
-    // Bill details with text margins
-    bytes.addAll(addTextMargin('Bill No: ${bill.billNumber}'));
-    bytes.addAll('\n'.codeUnits);
-    bytes.addAll(
-      addTextMargin('Date: ${DateFormat('dd/MM/yyyy').format(bill.billDate)}'),
+    // Create a 64-character line for testing
+    final String testLine = '=' * RECEIPT_WIDTH;
+    bytes += _generator!.text(
+      testLine,
+      styles: const PosStyles(align: PosAlign.left),
     );
-    bytes.addAll('\n'.codeUnits);
-    bytes.addAll(
-      addTextMargin('Time: ${DateFormat('HH:mm:ss').format(bill.billDate)}'),
-    );
-    bytes.addAll('\n'.codeUnits);
-    bytes.addAll('\n'.codeUnits);
 
-    // Customer and Sales Rep details with your working spacing
-    const int separatorWidth = 5;
-    final int availableWidth = contentWidth - separatorWidth;
-    final int customerSectionWidth = (availableWidth * 0.6).round();
-    final int repSectionWidth = availableWidth - customerSectionWidth;
-
-    final int safeCustomerWidth =
-        customerSectionWidth < 15 ? 15 : customerSectionWidth;
-    final int safeRepWidth = repSectionWidth < 10 ? 10 : repSectionWidth;
-
-    final int customerNameSpace = safeCustomerWidth - 10;
-    final int customerAddressSpace = safeCustomerWidth - 9;
-    final int customerPhoneSpace = safeCustomerWidth - 7;
-    final int repNameSpace = safeRepWidth - 5;
-    final int repPhoneSpace = safeRepWidth - 7;
-
-    final String separator = ' ' * separatorWidth;
-
-    String customerName = safeTruncate(bill.customerName, customerNameSpace);
-    String customerAddress = safeTruncate(
-      bill.outletAddress,
-      customerAddressSpace,
-    );
-    String customerPhone = safeTruncate(bill.outletPhone, customerPhoneSpace);
-    String repName = safeTruncate(bill.salesRepName, repNameSpace);
-    String repPhone = safeTruncate(bill.salesRepPhone, repPhoneSpace);
-
-    // Row 1: Customer Name | Rep Name
-    String customerNameRow = 'Customer: $customerName'.padRight(
-      safeCustomerWidth,
-    );
-    String repNameRow = 'Rep: $repName';
-    bytes.addAll(addTextMargin(customerNameRow + separator + repNameRow));
-    bytes.addAll('\n'.codeUnits);
-
-    // Row 2: Customer Address | Rep Phone (if either exists)
-    if (bill.outletAddress.isNotEmpty || bill.salesRepPhone.isNotEmpty) {
-      String customerAddressRow =
-          bill.outletAddress.isNotEmpty
-              ? 'Address: $customerAddress'.padRight(safeCustomerWidth)
-              : ''.padRight(safeCustomerWidth);
-      String repPhoneRow =
-          bill.salesRepPhone.isNotEmpty ? 'Phone: $repPhone' : '';
-      bytes.addAll(addTextMargin(customerAddressRow + separator + repPhoneRow));
-      bytes.addAll('\n'.codeUnits);
-    }
-
-    // Row 3: Customer Phone (if exists)
-    if (bill.outletPhone.isNotEmpty) {
-      String customerPhoneRow = 'Phone: $customerPhone'.padRight(
-        safeCustomerWidth,
-      );
-      bytes.addAll(addTextMargin(customerPhoneRow + separator));
-      bytes.addAll('\n'.codeUnits);
-    }
-
-    bytes.addAll('\n'.codeUnits);
-
-    // Horizontal line before table
-    bytes.addAll(addTextMargin(getHorizontalLine()));
-    bytes.addAll('\n'.codeUnits);
-
-    // FIXED TABLE HEADER - Proper total width calculation
-    bytes.addAll([ESC, 0x45, 0x01]); // Bold on
-
-    // Fixed column widths that add up correctly
-    const int numWidth = 3; // # column
-    const int nameWidth = 18; // Item Name column
-    const int priceWidth = 8; // Price column
-    const int qtyWidth = 4; // Qty column
-    const int totalWidth = 7; // Total column
-    // Total table width = 3+18+8+4+7 = 40 characters
-
-    String headerRow =
-        '#'.padRight(numWidth) +
-        'Item Name'.padRight(nameWidth) +
-        'Price'.padLeft(priceWidth) +
-        'Qty'.padLeft(qtyWidth) +
-        'Total'.padLeft(totalWidth);
-
-    bytes.addAll(addTextMargin(headerRow));
-    bytes.addAll('\n'.codeUnits);
-    bytes.addAll([ESC, 0x45, 0x00]); // Bold off
-
-    bytes.addAll(addTextMargin(getHorizontalLine()));
-    bytes.addAll('\n'.codeUnits);
-
-    // FIXED TABLE ITEMS - Consistent with header alignment
-    for (final item in bill.items) {
-      String itemName = safeTruncate(
-        item.itemName,
-        nameWidth - 1,
-      ); // Leave space for padding
-
-      String itemRow =
-          '${item.itemNumber}'.padRight(numWidth) +
-          itemName.padRight(nameWidth) +
-          '${item.unitPrice.toStringAsFixed(2)}'.padLeft(priceWidth) +
-          '${item.quantity}'.padLeft(qtyWidth) +
-          '${item.totalPrice.toStringAsFixed(2)}'.padLeft(totalWidth);
-
-      bytes.addAll(addTextMargin(itemRow));
-      bytes.addAll('\n'.codeUnits);
-    }
-
-    bytes.addAll(addTextMargin(getHorizontalLine()));
-    bytes.addAll('\n'.codeUnits);
-
-    // FIXED TOTALS - Aligned with table width (40 chars)
-    const int tableWidth =
-        numWidth + nameWidth + priceWidth + qtyWidth + totalWidth;
-
-    if (bill.discountAmount > 0) {
-      bytes.addAll(
-        addTextMargin(
-          'Subtotal:'.padLeft(tableWidth - 8) +
-              '${(bill.totalAmount + bill.discountAmount).toStringAsFixed(2)}'
-                  .padLeft(8),
-        ),
-      );
-      bytes.addAll('\n'.codeUnits);
-
-      bytes.addAll(
-        addTextMargin(
-          'Discount:'.padLeft(tableWidth - 8) +
-              '-${bill.discountAmount.toStringAsFixed(2)}'.padLeft(8),
-        ),
-      );
-      bytes.addAll('\n'.codeUnits);
-    }
-
-    if (bill.taxAmount > 0) {
-      bytes.addAll(
-        addTextMargin(
-          'Tax:'.padLeft(tableWidth - 8) +
-              '${bill.taxAmount.toStringAsFixed(2)}'.padLeft(8),
-        ),
-      );
-      bytes.addAll('\n'.codeUnits);
-    }
-
-    // Total amount - bold and properly aligned
-    bytes.addAll([ESC, 0x45, 0x01]); // Bold on
-    bytes.addAll(
-      addTextMargin(
-        'TOTAL:'.padLeft(tableWidth - 11) +
-            'Rs.${bill.finalAmount.toStringAsFixed(2)}'.padLeft(11),
+    bytes += _generator!.text(
+      'TEST PRINT - 64 CHARACTER WIDTH',
+      styles: const PosStyles(
+        align: PosAlign.center,
+        bold: true,
+        height: PosTextSize.size2,
+        width: PosTextSize.size2,
       ),
     );
-    bytes.addAll('\n'.codeUnits);
-    bytes.addAll([ESC, 0x45, 0x00]); // Bold off
 
-    bytes.addAll(addTextMargin(getHorizontalLine()));
-    bytes.addAll('\n'.codeUnits);
-    bytes.addAll('\n'.codeUnits);
-
-    // Signature section with proper spacing
-    final int leftSignWidth = (contentWidth * 0.4).round();
-    final int rightSignWidth = (contentWidth * 0.4).round();
-    final int signSeparator = contentWidth - leftSignWidth - rightSignWidth;
-
-    bytes.addAll(
-      addTextMargin(
-        'Customer Signature:'.padRight(leftSignWidth) +
-            ' ' * signSeparator +
-            'Rep Signature:'.padLeft(rightSignWidth),
-      ),
+    bytes += _generator!.text(
+      'Lumora Business',
+      styles: const PosStyles(align: PosAlign.center, bold: true),
     );
-    bytes.addAll('\n'.codeUnits);
-    bytes.addAll(
-      addTextMargin(
-        '${'_' * (leftSignWidth - 1)}${' ' * (signSeparator + 1)}${'_' * (rightSignWidth - 1)}',
-      ),
+
+    bytes += _generator!.text(
+      'Printer Test',
+      styles: const PosStyles(align: PosAlign.center),
     );
-    bytes.addAll('\n'.codeUnits);
-    bytes.addAll('\n'.codeUnits);
 
-    // Thank you message - center aligned
-    bytes.addAll([ESC, 0x61, 0x01]); // Center alignment
-    bytes.addAll(addTextMargin('Thank you for your business!'));
-    bytes.addAll('\n'.codeUnits);
-    bytes.addAll('\n'.codeUnits);
+    bytes += _generator!.text(
+      testLine,
+      styles: const PosStyles(align: PosAlign.left),
+    );
 
-    // Horizontal line
-    bytes.addAll(addTextMargin(getHorizontalLine()));
-    bytes.addAll('\n'.codeUnits);
+    bytes += _generator!.text(
+      DateFormat('dd/MM/yyyy HH:mm:ss').format(DateTime.now()),
+      styles: const PosStyles(align: PosAlign.center),
+    );
 
-    // Solution by section - center aligned
-    bytes.addAll(addTextMargin('Solution by'));
-    bytes.addAll('\n'.codeUnits);
-    bytes.addAll([ESC, 0x45, 0x01]); // Bold on
-    bytes.addAll(addTextMargin('Lumora Ventures Pvt Ltd'));
-    bytes.addAll('\n'.codeUnits);
-    bytes.addAll([ESC, 0x45, 0x00]); // Bold off
-    bytes.addAll(addTextMargin('Mobile: +94 76 620 6555'));
-    bytes.addAll('\n'.codeUnits);
+    bytes += _generator!.feed(1);
 
-    // Feed and cut
-    bytes.addAll('\n\n\n'.codeUnits);
-    bytes.addAll([GS, 0x56, 0x00]); // Cut paper
+    // Test character width display
+    bytes += _generator!.text(
+      '123456789012345678901234567890123456789012345678901234567890123456789',
+      styles: const PosStyles(align: PosAlign.left),
+    );
+    bytes += _generator!.text(
+      '         1         2         3         4         5         6    ',
+      styles: const PosStyles(align: PosAlign.left),
+    );
+
+    bytes += _generator!.feed(1);
+
+    // Test different styles
+    bytes += _generator!.text('Bold text', styles: const PosStyles(bold: true));
+    bytes += _generator!.text(
+      'Underlined text',
+      styles: const PosStyles(underline: true),
+    );
+    bytes += _generator!.text(
+      'Reverse text',
+      styles: const PosStyles(reverse: true),
+    );
+
+    bytes += _generator!.feed(1);
+
+    // Test alignment
+    bytes += _generator!.text(
+      'Left aligned',
+      styles: const PosStyles(align: PosAlign.left),
+    );
+    bytes += _generator!.text(
+      'Center aligned',
+      styles: const PosStyles(align: PosAlign.center),
+    );
+    bytes += _generator!.text(
+      'Right aligned',
+      styles: const PosStyles(align: PosAlign.right),
+    );
+
+    bytes += _generator!.feed(1);
+
+    // Test table with 64-char width
+    bytes += _generator!.row([
+      PosColumn(
+        text: 'Column 1',
+        width: 4,
+        styles: const PosStyles(align: PosAlign.center, underline: true),
+      ),
+      PosColumn(
+        text: 'Column 2',
+        width: 4,
+        styles: const PosStyles(align: PosAlign.center, underline: true),
+      ),
+      PosColumn(
+        text: 'Column 3',
+        width: 4,
+        styles: const PosStyles(align: PosAlign.center, underline: true),
+      ),
+    ]);
+
+    bytes += _generator!.row([
+      PosColumn(text: 'Test Data 1', width: 4),
+      PosColumn(text: 'Test Data 2', width: 4),
+      PosColumn(text: 'Test Data 3', width: 4),
+    ]);
+
+    bytes += _generator!.feed(1);
+
+    bytes += _generator!.text(
+      'If you can read this clearly,',
+      styles: const PosStyles(align: PosAlign.center),
+    );
+
+    bytes += _generator!.text(
+      'your 64-character width printer is working perfectly!',
+      styles: const PosStyles(align: PosAlign.center, bold: true),
+    );
+
+    bytes += _generator!.text(
+      testLine,
+      styles: const PosStyles(align: PosAlign.left),
+    );
+
+    bytes += _generator!.feed(3);
+    bytes += _generator!.cut();
 
     return bytes;
   }
 
-  // Generate test receipt
-  static String _generateTestReceipt() {
-    final StringBuffer test = StringBuffer();
-    const int paperWidth = 48; // 104mm paper width in characters
-    const String margin = '    '; // 4-space margin
-
-    test.writeln('$margin${'=' * (paperWidth - 8)}');
-    test.writeln('$margin${_centerText('TEST PRINT', paperWidth - 8)}');
-    test.writeln('$margin${_centerText('Lumora Business', paperWidth - 8)}');
-    test.writeln('$margin${_centerText('Printer Test', paperWidth - 8)}');
-    test.writeln('$margin${'=' * (paperWidth - 8)}');
-    test.writeln();
-    test.writeln(
-      '$margin${_centerText(DateFormat('dd/MM/yyyy HH:mm:ss').format(DateTime.now()), paperWidth - 8)}',
-    );
-    test.writeln();
-    test.writeln(
-      '$margin${_centerText('If you can read this,', paperWidth - 8)}',
-    );
-    test.writeln(
-      '$margin${_centerText('your printer is working!', paperWidth - 8)}',
-    );
-    test.writeln();
-    test.writeln('$margin${'=' * (paperWidth - 8)}');
-    test.writeln();
-    test.writeln();
-    test.writeln();
-
-    return test.toString();
+  // Helper method to truncate text safely
+  static String _truncateText(
+    String text,
+    int maxLength, {
+    String suffix = '...',
+  }) {
+    if (maxLength <= 0) return '';
+    if (text.length <= maxLength) return text;
+    if (maxLength <= suffix.length) return text.substring(0, maxLength);
+    return '${text.substring(0, maxLength - suffix.length)}$suffix';
   }
 
-  // Get available paper sizes
-  static Future<List<String>> getAvailablePaperSizes() async {
-    try {
-      // Common thermal printer paper sizes
-      return ['58mm', '80mm', '104mm'];
-    } catch (e) {
-      print('Error getting paper sizes: $e');
-      return ['58mm', '80mm', '104mm'];
+  // Get available paper sizes - updated for 4-inch support
+  static List<PaperSize> getAvailablePaperSizes() {
+    return [
+      PaperSize.mm58, // 2.3 inches
+      PaperSize.mm80, // 3.1 inches (close to your 4-inch, use this)
+    ];
+  }
+
+  // Get paper size name with 4-inch info
+  static String getPaperSizeName(PaperSize paperSize) {
+    switch (paperSize) {
+      case PaperSize.mm58:
+        return '58mm (2.3")';
+      case PaperSize.mm80:
+        return '80mm (3.1") - Use for 4" paper (64 chars)';
+      default:
+        return '80mm (3.1") - Use for 4" paper (64 chars)';
     }
   }
 
-  // Get printer status
+  // Get printer status with enhanced information
   static Future<Map<String, dynamic>> getPrinterStatus() async {
     try {
       final status = await PrintBluetoothThermal.connectionStatus;
@@ -740,47 +665,81 @@ class BillPrinterService {
         'deviceAddress': _selectedDevice?.macAdress ?? 'None',
         'connectionStatus': status,
         'bluetoothEnabled': bluetoothEnabled,
+        'generatorInitialized': _generator != null,
+        'profileLoaded': _profile != null,
+        'receiptWidth': RECEIPT_WIDTH,
         'lastUpdate': DateTime.now().toString(),
       };
     } catch (e) {
-      return {'isConnected': false, 'error': e.toString()};
+      return {
+        'isConnected': false,
+        'error': e.toString(),
+        'generatorInitialized': false,
+        'profileLoaded': false,
+        'receiptWidth': RECEIPT_WIDTH,
+      };
     }
   }
 
   // Check if ready to print
   static bool isReadyToPrint() {
-    return _isConnected && _selectedDevice != null;
+    return _isConnected && _selectedDevice != null && _generator != null;
   }
 
-  // Print raw text (useful for testing)
-  static Future<bool> printRawText(String text) async {
+  // Print raw bytes (for advanced users)
+  static Future<bool> printRawBytes(List<int> bytes) async {
     if (!_isConnected || _selectedDevice == null) {
       throw Exception('Printer not connected');
     }
 
     try {
-      // Convert string to bytes and print
-      final List<int> bytes = text.codeUnits;
       final bool result = await PrintBluetoothThermal.writeBytes(bytes);
       return result;
     } catch (e) {
-      print('Error printing raw text: $e');
+      print('Error printing raw bytes: $e');
       return false;
     }
   }
 
-  // Advanced: Print with custom ESC/POS commands
-  static Future<bool> printWithCommands(List<int> commands) async {
-    if (!_isConnected || _selectedDevice == null) {
-      throw Exception('Printer not connected');
+  // Print custom formatted text using esc_pos_utils_plus
+  static Future<bool> printCustomText(
+    String text, {
+    PosAlign align = PosAlign.left,
+    bool bold = false,
+    bool underline = false,
+    bool reverse = false,
+    PosTextSize height = PosTextSize.size1,
+    PosTextSize width = PosTextSize.size1,
+  }) async {
+    if (!isReadyToPrint()) {
+      throw Exception('Printer not ready');
     }
 
     try {
-      final bool result = await PrintBluetoothThermal.writeBytes(commands);
+      List<int> bytes = [];
+      bytes += _generator!.text(
+        text,
+        styles: PosStyles(
+          align: align,
+          bold: bold,
+          underline: underline,
+          reverse: reverse,
+          height: height,
+          width: width,
+        ),
+      );
+      bytes += _generator!.feed(1);
+
+      final bool result = await PrintBluetoothThermal.writeBytes(bytes);
       return result;
     } catch (e) {
-      print('Error printing with commands: $e');
+      print('Error printing custom text: $e');
       return false;
     }
+  }
+
+  // Get receipt width for external reference
+  static int getReceiptWidth() {
+    return RECEIPT_WIDTH;
   }
 }
