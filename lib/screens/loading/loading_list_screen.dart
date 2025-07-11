@@ -108,10 +108,10 @@ class _LoadingListScreenState extends State<LoadingListScreen>
     return AppBar(
       title: const Text(
         'Today\'s Loading',
-        style: TextStyle(fontWeight: FontWeight.w600),
+        style: TextStyle(fontWeight: FontWeight.w600, color: Colors.white),
       ),
-      backgroundColor: Colors.white,
-      foregroundColor: Colors.grey.shade800,
+      backgroundColor: Colors.deepPurple.shade800,
+      foregroundColor: Colors.white,
       elevation: 0,
       actions: [
         Consumer<LoadingProvider>(
@@ -122,7 +122,7 @@ class _LoadingListScreenState extends State<LoadingListScreen>
                 child: Center(
                   child: Text(
                     'Updated: ${DateFormat('HH:mm').format(loadingProvider.lastUpdateTime!)}',
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
                   ),
                 ),
               );

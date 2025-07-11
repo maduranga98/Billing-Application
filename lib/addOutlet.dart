@@ -762,16 +762,16 @@ class _AddOutletState extends State<AddOutlet> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey.shade50,
+      backgroundColor: Colors.deepPurple.shade50,
       appBar: AppBar(
         elevation: 0,
-        backgroundColor: Colors.green.shade600,
+        backgroundColor: Colors.deepPurple.shade800,
         foregroundColor: Colors.white,
         title: const Text(
           'Add New Outlet',
-          style: TextStyle(fontWeight: FontWeight.w600),
+          style: TextStyle(fontWeight: FontWeight.w600, color: Colors.white),
         ),
-        centerTitle: true,
+
         actions: [
           if (_offlineOutletCount > 0 && _isConnected)
             IconButton(

@@ -45,13 +45,12 @@ class _OutletSelectionScreenState extends State<OutletSelectionScreen> {
       backgroundColor: Colors.grey.shade50,
       appBar: AppBar(
         elevation: 0,
-        backgroundColor: Colors.blue.shade600,
+        backgroundColor: Colors.deepPurple.shade800,
         foregroundColor: Colors.white,
         title: const Text(
           'Select Outlet',
-          style: TextStyle(fontWeight: FontWeight.w600),
+          style: TextStyle(fontWeight: FontWeight.w600, color: Colors.white),
         ),
-        centerTitle: true,
       ),
       body: Column(
         children: [

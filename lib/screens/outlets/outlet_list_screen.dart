@@ -67,14 +67,14 @@ class _OutletListScreenState extends State<OutletListScreen>
   PreferredSizeWidget _buildAppBar() {
     return AppBar(
       elevation: 0,
-      backgroundColor: Colors.white,
-      surfaceTintColor: Colors.transparent,
+      backgroundColor: Colors.deepPurple.shade800,
+      foregroundColor: Colors.white,
       title: const Text(
         'Outlets',
         style: TextStyle(
           fontSize: 24,
           fontWeight: FontWeight.w700,
-          color: Color(0xFF1A1A1A),
+          color: Colors.white,
         ),
       ),
       actions: [

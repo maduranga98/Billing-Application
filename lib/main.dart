@@ -8,9 +8,11 @@ import 'package:lumorabiz_billing/screens/billing/bill_preview_screen.dart';
 import 'package:lumorabiz_billing/screens/billing/bill_success_screen.dart';
 import 'package:lumorabiz_billing/screens/billing/item_selection_screen.dart';
 import 'package:lumorabiz_billing/screens/billing/outlet_selection_screen.dart';
+import 'package:lumorabiz_billing/screens/billing/view_bills_screen.dart';
 import 'package:lumorabiz_billing/screens/home/home_screen.dart';
 import 'package:lumorabiz_billing/screens/outlets/outlet_list_screen.dart';
 import 'package:lumorabiz_billing/screens/printing/printer_selection_screen.dart';
+import 'package:lumorabiz_billing/screens/reports/daily_summary_screen.dart';
 import 'package:lumorabiz_billing/splashScreen.dart';
 import 'package:provider/provider.dart';
 
@@ -139,10 +141,8 @@ class LumoraBizApp extends StatelessWidget {
               (context) => const OutletSelectionScreen(),
           '/billing/items': (context) => const ItemSelectionScreen(),
           '/billing/success': (context) => const BillSuccessScreen(),
-          // '/billing': (context) => const BillingScreen(),
-          // '/reports': (context) => const ReportsScreen(),
-          // '/profile': (context) => const ProfileScreen(),
-          // '/settings': (context) => const SettingsScreen(),
+          '/reports/daily-summary': (context) => const DailySummaryScreen(),
+          '/billing/view-bills': (context) => const ViewBillsScreen(),
         },
 
         // Handle dynamic routes with parameters
