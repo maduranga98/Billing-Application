@@ -372,7 +372,7 @@ class BillPrinterService {
     }
 
     // Grand total with emphasis
-    String totalLine = 'TOTAL: Rs. ${bill.finalAmount.toStringAsFixed(2)}';
+    String totalLine = 'TOTAL: Rs. ${bill.totalAmount.toStringAsFixed(2)}';
     bytes += _generator!.text(
       addMargin(totalLine.padLeft(contentWidth)),
       styles: const PosStyles(bold: true, height: PosTextSize.size2),

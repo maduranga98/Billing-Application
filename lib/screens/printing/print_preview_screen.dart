@@ -1,4 +1,4 @@
-// lib/screens/printing/print_preview_screen.dart
+// lib/screens/printing/print_preview_screen.dart (Updated with Loading Cost Support)
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../models/bill.dart';
@@ -65,7 +65,7 @@ class _PrintPreviewScreenState extends State<PrintPreviewScreen> {
           );
         }).toList();
 
-    // Create PrintBill from Bill
+    // Create PrintBill from Bill with loading cost support
     _printBill = PrintBill(
       billNumber: widget.bill.billNumber,
       billDate: widget.bill.createdAt,
@@ -79,6 +79,8 @@ class _PrintPreviewScreenState extends State<PrintPreviewScreen> {
       salesRepPhone: widget.salesRepPhone,
       paymentType: widget.bill.paymentType,
       items: printItems,
+      subtotalAmount: widget.bill.subtotalAmount, // NEW: Add subtotal
+      loadingCost: widget.bill.loadingCost, // NEW: Add loading cost
       totalAmount: widget.bill.totalAmount,
       discountAmount: widget.bill.discountAmount,
       taxAmount: widget.bill.taxAmount,
@@ -218,10 +220,9 @@ class _PrintPreviewScreenState extends State<PrintPreviewScreen> {
     );
   }
 
+  // Updated calculation to properly use bill's totalAmount
   double get _finalAmount {
-    return widget.bill.totalAmount -
-        widget.bill.discountAmount +
-        widget.bill.taxAmount;
+    return widget.bill.totalAmount;
   }
 
   @override
@@ -511,7 +512,7 @@ class _PrintPreviewScreenState extends State<PrintPreviewScreen> {
                     const SizedBox(height: 16),
                     const Divider(),
 
-                    // Summary
+                    // Summary - UPDATED with loading cost support
                     const Text(
                       'SUMMARY:',
                       style: TextStyle(
@@ -521,13 +522,24 @@ class _PrintPreviewScreenState extends State<PrintPreviewScreen> {
                     ),
                     const SizedBox(height: 8),
 
+                    // Subtotal
                     _buildSummaryRow(
                       'Subtotal:',
                       BillPrinterService.currency.format(
-                        widget.bill.totalAmount,
+                        widget.bill.subtotalAmount,
                       ),
                     ),
 
+                    // Loading Cost (only show if > 0)
+                    if (widget.bill.loadingCost > 0)
+                      _buildSummaryRow(
+                        'Loading Cost:',
+                        BillPrinterService.currency.format(
+                          widget.bill.loadingCost,
+                        ),
+                      ),
+
+                    // Discount (only show if > 0)
                     if (widget.bill.discountAmount > 0)
                       _buildSummaryRow(
                         'Discount:',
@@ -535,6 +547,7 @@ class _PrintPreviewScreenState extends State<PrintPreviewScreen> {
                         isNegative: true,
                       ),
 
+                    // Tax (only show if > 0)
                     if (widget.bill.taxAmount > 0)
                       _buildSummaryRow(
                         'Tax:',
@@ -545,6 +558,7 @@ class _PrintPreviewScreenState extends State<PrintPreviewScreen> {
 
                     const Divider(thickness: 2),
 
+                    // Total
                     _buildSummaryRow(
                       'TOTAL:',
                       BillPrinterService.currency.format(_finalAmount),

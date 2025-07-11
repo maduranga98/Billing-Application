@@ -1,679 +1,570 @@
-// lib/screens/billing/bill_preview_screen.dart
+// lib/screens/billing/bill_preview_screen.dart (Updated with Loading Cost Support)
 import 'package:flutter/material.dart';
-import 'package:lumorabiz_billing/models/print_bill.dart';
 import 'package:provider/provider.dart';
-import 'package:intl/intl.dart';
-import '../../providers/billing_provider.dart';
 import '../../providers/auth_provider.dart';
-import '../../services/printing/bill_printer_service.dart';
+import '../../providers/billing_provider.dart';
 import '../../services/billing/billing_service.dart';
+import '../../services/printing/bill_printer_service.dart';
 import '../../utils/bill_generator.dart';
 import '../printing/printer_selection_screen.dart';
 
 class BillPreviewScreen extends StatefulWidget {
-  const BillPreviewScreen({super.key});
+  final String paymentType;
+
+  const BillPreviewScreen({super.key, required this.paymentType});
 
   @override
   State<BillPreviewScreen> createState() => _BillPreviewScreenState();
 }
 
 class _BillPreviewScreenState extends State<BillPreviewScreen> {
-  String _selectedPaymentType = 'cash';
-  final List<String> _paymentTypes = ['cash', 'credit', 'cheque'];
-  bool _isPrinting = false;
   bool _isCreatingBill = false;
-  late PrintBill _billData;
+  bool _isPrinting = false;
+  final TextEditingController _loadingCostController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    _generateBillData();
-  }
-
-  void _generateBillData() {
+    // Initialize loading cost with current value from provider
     final billingProvider = context.read<BillingProvider>();
-    final authProvider = context.read<AuthProvider>();
-
-    _billData = BillGenerator.generatePrintBill(
-      billNumber: _generateBillNumber(),
-      outlet: billingProvider.selectedOutlet!,
-      salesRep: authProvider.currentSession!,
-      selectedItems: billingProvider.selectedItems,
-      paymentType: _selectedPaymentType,
+    _loadingCostController.text = billingProvider.loadingCost.toStringAsFixed(
+      0,
     );
   }
 
   @override
-  Widget build(BuildContext context) {
-    final billingProvider = context.watch<BillingProvider>();
-    final totalAmount = billingProvider.selectedItems.fold<double>(
-      0.0,
-      (sum, item) => sum + (item.unitPrice * item.quantity),
-    );
+  void dispose() {
+    _loadingCostController.dispose();
+    super.dispose();
+  }
 
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: Colors.grey.shade50,
       appBar: AppBar(
-        elevation: 0,
-        backgroundColor: Colors.blue.shade600,
-        foregroundColor: Colors.white,
         title: const Text(
           'Bill Preview',
           style: TextStyle(fontWeight: FontWeight.w600),
         ),
-        centerTitle: true,
-        actions: [
-          // Printer Status Icon
-          IconButton(
-            onPressed: () => _showPrinterOptions(),
-            icon: Icon(
-              BillPrinterService.isConnected
-                  ? Icons.print
-                  : Icons.print_disabled,
-              color:
-                  BillPrinterService.isConnected
-                      ? Colors.white
-                      : Colors.white70,
-            ),
-            tooltip:
-                BillPrinterService.isConnected
-                    ? 'Printer Connected'
-                    : 'Setup Printer',
-          ),
-        ],
+        backgroundColor: Colors.white,
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Colors.black87),
       ),
-      body: SingleChildScrollView(
+      body: Consumer<BillingProvider>(
+        builder: (context, billingProvider, child) {
+          if (billingProvider.selectedItems.isEmpty) {
+            return const Center(child: Text('No items selected'));
+          }
+
+          return Column(
+            children: [
+              // Bill Preview Content
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Outlet Information
+                      _buildOutletInfo(billingProvider),
+                      const SizedBox(height: 20),
+
+                      // Items List
+                      _buildItemsList(billingProvider),
+                      const SizedBox(height: 20),
+
+                      // Loading Cost Section
+                      _buildLoadingCostSection(billingProvider),
+                      const SizedBox(height: 20),
+
+                      // Bill Summary
+                      _buildBillSummary(billingProvider),
+                    ],
+                  ),
+                ),
+              ),
+
+              // Action Buttons
+              _buildActionButtons(billingProvider),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildOutletInfo(BillingProvider billingProvider) {
+    final outlet = billingProvider.selectedOutlet!;
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Bill Preview Card
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.grey.shade200),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.grey.withOpacity(0.1),
-                    spreadRadius: 1,
-                    blurRadius: 3,
-                    offset: const Offset(0, 1),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Header
-                  Center(
-                    child: Column(
-                      children: [
-                        Text(
-                          'LUMORA BUSINESS',
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.blue.shade700,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'No. 123, Main Street, Colombo',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey.shade600,
-                          ),
-                        ),
-                        Text(
-                          'Tel: +94 11 123 4567',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey.shade600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 20),
-
-                  // Bill Details
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Bill No: ${_generateBillNumber()}',
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'Date: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())}',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey.shade600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text(
-                              'Outlet: ${billingProvider.selectedOutlet?.outletName ?? ''}',
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                              ),
-                              textAlign: TextAlign.right,
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'Rep: ${context.read<AuthProvider>().currentSession?.name ?? ''}',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey.shade600,
-                              ),
-                              textAlign: TextAlign.right,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 20),
-
-                  // Items Table Header
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 8,
-                      horizontal: 12,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade100,
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: const Row(
-                      children: [
-                        Expanded(
-                          flex: 3,
-                          child: Text(
-                            'Item',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: Text(
-                            'Qty',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: Text(
-                            'Price',
-                            textAlign: TextAlign.right,
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: Text(
-                            'Total',
-                            textAlign: TextAlign.right,
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 8),
-
-                  // Items List
-                  ...billingProvider.selectedItems.map((item) {
-                    final itemTotal = item.unitPrice * item.quantity;
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 4,
-                        horizontal: 12,
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            flex: 3,
-                            child: Text(
-                              item.productName,
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ),
-                          Expanded(
-                            child: Text(
-                              '${item.quantity}',
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ),
-                          Expanded(
-                            child: Text(
-                              '${item.unitPrice.toStringAsFixed(2)}',
-                              textAlign: TextAlign.right,
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ),
-                          Expanded(
-                            child: Text(
-                              '${itemTotal.toStringAsFixed(2)}',
-                              textAlign: TextAlign.right,
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  }).toList(),
-
-                  const SizedBox(height: 16),
-
-                  // Divider
-                  Container(height: 1, color: Colors.grey.shade300),
-
-                  const SizedBox(height: 16),
-
-                  // Total
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Total Amount:',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Text(
-                          'Rs. ${totalAmount.toStringAsFixed(2)}',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.blue.shade700,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 20),
-
-            // Payment Type Selection
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.grey.shade200),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.grey.withOpacity(0.1),
-                    spreadRadius: 1,
-                    blurRadius: 3,
-                    offset: const Offset(0, 1),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Payment Type',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    children:
-                        _paymentTypes.map((type) {
-                          final isSelected = _selectedPaymentType == type;
-                          return GestureDetector(
-                            onTap: () {
-                              setState(() {
-                                _selectedPaymentType = type;
-                                _generateBillData(); // Regenerate bill data with new payment type
-                              });
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 8,
-                              ),
-                              decoration: BoxDecoration(
-                                color:
-                                    isSelected
-                                        ? Colors.blue.shade600
-                                        : Colors.grey.shade100,
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(
-                                  color:
-                                      isSelected
-                                          ? Colors.blue.shade600
-                                          : Colors.grey.shade300,
-                                ),
-                              ),
-                              child: Text(
-                                type.toUpperCase(),
-                                style: TextStyle(
-                                  color:
-                                      isSelected
-                                          ? Colors.white
-                                          : Colors.grey.shade700,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ),
-                          );
-                        }).toList(),
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 80), // Space for bottom buttons
-          ],
-        ),
-      ),
-      bottomNavigationBar: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          border: Border(top: BorderSide(color: Colors.grey.shade200)),
-        ),
-        child: SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Print Button (only show if printer is connected)
-              if (BillPrinterService.isConnected) ...[
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: _isPrinting ? null : _printBillAction,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.orange.shade600,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    child:
-                        _isPrinting
-                            ? const Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                      Colors.white,
-                                    ),
-                                  ),
-                                ),
-                                SizedBox(width: 8),
-                                Text('Printing...'),
-                              ],
-                            )
-                            : const Text(
-                              'Print Bill',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                  ),
+            Row(
+              children: [
+                Icon(Icons.store, color: Colors.blue.shade600, size: 20),
+                const SizedBox(width: 8),
+                const Text(
+                  'Customer Details',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                 ),
-                const SizedBox(height: 12),
               ],
-
-              // Action Buttons Row
+            ),
+            const SizedBox(height: 12),
+            Text(
+              outlet.outletName,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 4),
+            if (outlet.address.isNotEmpty)
+              Text(
+                outlet.address,
+                style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+              ),
+            if (outlet.phoneNumber.isNotEmpty) ...[
+              const SizedBox(height: 4),
               Row(
                 children: [
-                  // Setup Printer Button (only show if not connected)
-                  if (!BillPrinterService.isConnected)
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: _navigateToPrinterSetup,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.orange.shade600,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                        child: const Text(
-                          'Setup Printer',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ),
-
-                  if (!BillPrinterService.isConnected)
-                    const SizedBox(width: 12),
-
-                  // Create Bill Button
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: _isCreatingBill ? null : _createBill,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green.shade600,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      child:
-                          _isCreatingBill
-                              ? const Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      valueColor: AlwaysStoppedAnimation<Color>(
-                                        Colors.white,
-                                      ),
-                                    ),
-                                  ),
-                                  SizedBox(width: 8),
-                                  Text('Creating...'),
-                                ],
-                              )
-                              : const Text(
-                                'Create Bill',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                    ),
+                  Icon(Icons.phone, size: 16, color: Colors.grey.shade600),
+                  const SizedBox(width: 4),
+                  Text(
+                    outlet.phoneNumber,
+                    style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
                   ),
                 ],
               ),
             ],
-          ),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.blue.shade50,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: Colors.blue.shade200),
+              ),
+              child: Text(
+                'Payment: ${widget.paymentType.toUpperCase()}',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.blue.shade700,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  String _generateBillNumber() {
-    final now = DateTime.now();
-    final dateStr = DateFormat('yyyyMMdd').format(now);
-    final timeStr = DateFormat('HHmm').format(now);
-    return 'LB$dateStr$timeStr';
+  Widget _buildItemsList(BillingProvider billingProvider) {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.inventory_2, color: Colors.green.shade600, size: 20),
+                const SizedBox(width: 8),
+                const Text(
+                  'Items',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+                const Spacer(),
+                Text(
+                  '${billingProvider.selectedItems.length} items',
+                  style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: billingProvider.selectedItems.length,
+              separatorBuilder: (context, index) => const Divider(height: 1),
+              itemBuilder: (context, index) {
+                final item = billingProvider.selectedItems[index];
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        flex: 3,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              item.productName,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            Text(
+                              'Code: ${item.productCode}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey.shade600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Expanded(
+                        flex: 2,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              '${item.quantity} × Rs.${item.unitPrice.toStringAsFixed(2)}/kg',
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                            Text(
+                              '${item.totalWeight.toStringAsFixed(1)}kg',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.grey.shade600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Expanded(
+                        flex: 1,
+                        child: Text(
+                          'Rs.${item.totalPrice.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          textAlign: TextAlign.right,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
-  void _showPrinterOptions() {
+  Widget _buildLoadingCostSection(BillingProvider billingProvider) {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.local_shipping,
+                  color: Colors.orange.shade600,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  'Loading Cost',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _loadingCostController,
+                    keyboardType: TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: InputDecoration(
+                      labelText: 'Loading Cost (Rs.)',
+                      prefixText: 'Rs. ',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                    ),
+                    onChanged: (value) {
+                      final cost = double.tryParse(value) ?? 0.0;
+                      billingProvider.setLoadingCost(cost);
+                    },
+                  ),
+                ),
+                const SizedBox(width: 12),
+                ElevatedButton(
+                  onPressed: () {
+                    billingProvider.setLoadingCost(0.0);
+                    _loadingCostController.text = '0';
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.grey.shade200,
+                    foregroundColor: Colors.grey.shade700,
+                    elevation: 0,
+                  ),
+                  child: const Text('Clear'),
+                ),
+              ],
+            ),
+            if (billingProvider.loadingCost > 0) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Loading cost will be added to the total bill amount',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey.shade600,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBillSummary(BillingProvider billingProvider) {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.receipt_long,
+                  color: Colors.purple.shade600,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  'Bill Summary',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            _buildSummaryRow(
+              'Subtotal',
+              'Rs.${billingProvider.subtotalAmount.toStringAsFixed(2)}',
+            ),
+            if (billingProvider.loadingCost > 0)
+              _buildSummaryRow(
+                'Loading Cost',
+                'Rs.${billingProvider.loadingCost.toStringAsFixed(2)}',
+              ),
+            const Divider(),
+            _buildSummaryRow(
+              'Total Amount',
+              'Rs.${billingProvider.totalAmount.toStringAsFixed(2)}',
+              isTotal: true,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSummaryRow(String label, String value, {bool isTotal = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: isTotal ? 16 : 14,
+              fontWeight: isTotal ? FontWeight.w700 : FontWeight.w500,
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: isTotal ? 16 : 14,
+              fontWeight: isTotal ? FontWeight.w700 : FontWeight.w600,
+              color: isTotal ? Colors.blue.shade700 : null,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActionButtons(BillingProvider billingProvider) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.shade300,
+            blurRadius: 4,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          // Print Button
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: _isPrinting ? null : _showPrintOptions,
+              icon:
+                  _isPrinting
+                      ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                      : const Icon(Icons.print),
+              label: Text(_isPrinting ? 'Printing...' : 'Print'),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+
+          // Create Bill Button
+          Expanded(
+            flex: 2,
+            child: ElevatedButton.icon(
+              onPressed: _isCreatingBill ? null : _createBill,
+              icon:
+                  _isCreatingBill
+                      ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Colors.white,
+                          ),
+                        ),
+                      )
+                      : const Icon(Icons.receipt_long),
+              label: Text(_isCreatingBill ? 'Creating...' : 'Create Bill'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue.shade600,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showPrintOptions() {
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder:
           (context) => Container(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(20),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Row(
-                  children: [
-                    Icon(
-                      BillPrinterService.isConnected
-                          ? Icons.bluetooth_connected
-                          : Icons.bluetooth_disabled,
-                      color:
-                          BillPrinterService.isConnected
-                              ? Colors.green
-                              : Colors.red,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        BillPrinterService.isConnected
-                            ? 'Printer Connected'
-                            : 'Printer Not Connected',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w600,
-                          color:
-                              BillPrinterService.isConnected
-                                  ? Colors.green
-                                  : Colors.red,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-
-                if (BillPrinterService.isConnected) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    'Device: ${BillPrinterService.selectedDevice?.name ?? 'Unknown'}',
-                    style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2),
                   ),
-                ],
-
+                ),
                 const SizedBox(height: 20),
 
-                // Action Buttons
-                Row(
-                  children: [
-                    if (BillPrinterService.isConnected) ...[
-                      Expanded(
-                        child: ElevatedButton(
-                          onPressed: () {
-                            Navigator.pop(context);
-                            _testPrint();
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.blue.shade600,
-                            foregroundColor: Colors.white,
-                          ),
-                          child: const Text('Test Print'),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                    ],
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: _navigateToPrinterSetup,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.orange.shade600,
-                          foregroundColor: Colors.white,
-                        ),
-                        child: Text(
-                          BillPrinterService.isConnected
-                              ? 'Change Printer'
-                              : 'Setup Printer',
-                        ),
-                      ),
-                    ),
-                  ],
+                const Text(
+                  'Print Options',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
                 ),
+                const SizedBox(height: 20),
+
+                ListTile(
+                  leading: const Icon(Icons.print, color: Colors.blue),
+                  title: const Text('Print Preview'),
+                  subtitle: const Text('Preview bill before printing'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _printBill();
+                  },
+                ),
+
+                ListTile(
+                  leading: const Icon(Icons.bluetooth, color: Colors.green),
+                  title: const Text('Printer Settings'),
+                  subtitle: const Text('Configure Bluetooth printer'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _navigateToPrinterSetup();
+                  },
+                ),
+
+                const SizedBox(height: 20),
               ],
             ),
           ),
     );
   }
 
-  Future<void> _testPrint() async {
-    try {
-      final result = await BillPrinterService.testPrint();
+  Future<void> _printBill() async {
+    if (_isPrinting) return;
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              result ? 'Test print successful!' : 'Test print failed',
-            ),
-            backgroundColor: result ? Colors.green : Colors.red,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Test print error: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _printBillAction() async {
     setState(() => _isPrinting = true);
 
     try {
-      final result = await BillPrinterService.printBill(_billData);
+      final billingProvider = context.read<BillingProvider>();
+      final authProvider = context.read<AuthProvider>();
+
+      if (authProvider.currentSession == null) {
+        throw Exception('User session not found');
+      }
+
+      // Generate print bill
+      final printBill = BillGenerator.generatePrintBill(
+        billNumber: DateTime.now().millisecondsSinceEpoch.toString(),
+        outlet: billingProvider.selectedOutlet!,
+        salesRep: authProvider.currentSession!,
+        selectedItems: billingProvider.selectedItems,
+        paymentType: widget.paymentType,
+        loadingCost: billingProvider.loadingCost, // Include loading cost
+      );
+
+      // Print the bill
+      final result = await BillPrinterService.printBill(printBill);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -736,11 +627,6 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
       return;
     }
 
-    final totalAmount = billingProvider.selectedItems.fold<double>(
-      0.0,
-      (sum, item) => sum + (item.unitPrice * item.quantity),
-    );
-
     // Show confirmation dialog
     showDialog(
       context: context,
@@ -756,37 +642,17 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
               children: [
                 Text('Outlet: ${billingProvider.selectedOutlet!.outletName}'),
                 Text('Items: ${billingProvider.selectedItems.length}'),
-                Text('Total: Rs. ${totalAmount.toStringAsFixed(2)}'),
-                Text('Payment: ${_selectedPaymentType.toUpperCase()}'),
-                const SizedBox(height: 16),
-                if (!BillPrinterService.isConnected)
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.shade50,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.orange.shade200),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.info,
-                          color: Colors.orange.shade600,
-                          size: 16,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'Bill will be saved without printing',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.orange.shade700,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
+                Text(
+                  'Subtotal: Rs.${billingProvider.subtotalAmount.toStringAsFixed(2)}',
+                ),
+                if (billingProvider.loadingCost > 0)
+                  Text(
+                    'Loading Cost: Rs.${billingProvider.loadingCost.toStringAsFixed(2)}',
                   ),
+                Text(
+                  'Total: Rs.${billingProvider.totalAmount.toStringAsFixed(2)}',
+                ),
+                Text('Payment: ${widget.paymentType.toUpperCase()}'),
               ],
             ),
             actions: [
@@ -796,14 +662,14 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
               ),
               ElevatedButton(
                 onPressed: () {
-                  Navigator.pop(context); // Close dialog
+                  Navigator.pop(context);
                   _processBillCreation();
                 },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green.shade600,
+                  backgroundColor: Colors.blue.shade600,
                   foregroundColor: Colors.white,
                 ),
-                child: const Text('Create'),
+                child: const Text('Create Bill'),
               ),
             ],
           ),
@@ -811,47 +677,51 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
   }
 
   Future<void> _processBillCreation() async {
+    if (_isCreatingBill) return;
+
     setState(() => _isCreatingBill = true);
 
     try {
       final billingProvider = context.read<BillingProvider>();
       final authProvider = context.read<AuthProvider>();
 
-      // Create the bill using BillingService
+      // Create the bill with loading cost
       final billId = await BillingService.createBill(
         session: authProvider.currentSession!,
         outlet: billingProvider.selectedOutlet!,
         items: billingProvider.selectedItems,
-        paymentType: _selectedPaymentType,
+        paymentType: widget.paymentType,
+        loadingCost: billingProvider.loadingCost, // Include loading cost
       );
 
       if (mounted) {
-        // Clear the bill after successful creation
-        billingProvider.clearBill();
-
+        // Show success message
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Bill created successfully! ID: $billId'),
+            content: Text('Bill created successfully! Bill ID: $billId'),
             backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3),
           ),
         );
 
-        // Navigate back to billing screen
-        Navigator.popUntil(context, (route) => route.isFirst);
+        // Clear the bill and navigate back
+        billingProvider.resetBilling();
+
+        // Navigate back to main screen
+        Navigator.of(context).popUntil((route) => route.isFirst);
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to create bill: $e'),
+            content: Text('Error creating bill: $e'),
             backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
           ),
         );
       }
     } finally {
-      if (mounted) {
-        setState(() => _isCreatingBill = false);
-      }
+      setState(() => _isCreatingBill = false);
     }
   }
 }

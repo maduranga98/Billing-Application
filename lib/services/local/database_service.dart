@@ -1,4 +1,4 @@
-// lib/services/local/database_service.dart (Updated with Loading support)
+// lib/services/local/database_service.dart (COMPLETE CLASS)
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'dart:convert';
@@ -19,7 +19,7 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 2, // Increased version for new tables
+      version: 3, // Increased version for loading cost support
       onCreate: _createDatabase,
       onUpgrade: _upgradeDatabase,
     );
@@ -68,24 +68,32 @@ class DatabaseService {
       )
     ''');
 
-    // Bills table
+    // Bills table (UPDATED with loading cost support)
     await db.execute('''
       CREATE TABLE bills (
         id TEXT PRIMARY KEY,
         outlet_id TEXT NOT NULL,
         bill_number TEXT UNIQUE,
+        subtotal_amount REAL NOT NULL DEFAULT 0.0,
+        loading_cost REAL NOT NULL DEFAULT 0.0,
         total_amount REAL NOT NULL,
         discount_amount REAL DEFAULT 0,
         tax_amount REAL DEFAULT 0,
         payment_type TEXT NOT NULL,
         payment_status TEXT DEFAULT 'pending',
+        outlet_name TEXT NOT NULL,
+        outlet_address TEXT,
+        outlet_phone TEXT,
         owner_id TEXT NOT NULL,
         business_id TEXT NOT NULL,
         created_by TEXT NOT NULL,
+        sales_rep_name TEXT NOT NULL,
+        sales_rep_phone TEXT,
         firebase_bill_id TEXT,
         sync_status TEXT DEFAULT 'pending',
         created_at INTEGER,
-        updated_at INTEGER
+        updated_at INTEGER,
+        FOREIGN KEY (outlet_id) REFERENCES outlets(id)
       )
     ''');
 
@@ -96,6 +104,7 @@ class DatabaseService {
         bill_id TEXT NOT NULL,
         product_id TEXT NOT NULL,
         product_name TEXT NOT NULL,
+        product_code TEXT NOT NULL,
         quantity INTEGER NOT NULL,
         unit_price REAL NOT NULL,
         total_price REAL NOT NULL,
@@ -120,6 +129,9 @@ class DatabaseService {
         owner_id TEXT NOT NULL,
         business_id TEXT NOT NULL,
         created_by TEXT NOT NULL,
+        route_id TEXT,
+        route_name TEXT,
+        is_active INTEGER DEFAULT 1,
         sync_status TEXT DEFAULT 'pending',
         created_at INTEGER,
         updated_at INTEGER
@@ -144,10 +156,20 @@ class DatabaseService {
 
     // Create indexes
     await db.execute(
+      'CREATE INDEX idx_user_session_active ON user_session(is_active)',
+    );
+    await db.execute(
       'CREATE INDEX idx_loadings_sales_rep ON loadings(sales_rep_id, status)',
     );
     await db.execute('CREATE INDEX idx_bills_outlet ON bills(outlet_id)');
     await db.execute('CREATE INDEX idx_bills_created_at ON bills(created_at)');
+    await db.execute(
+      'CREATE INDEX idx_bills_business ON bills(business_id, created_by)',
+    );
+    await db.execute('CREATE INDEX idx_bill_items_bill ON bill_items(bill_id)');
+    await db.execute(
+      'CREATE INDEX idx_outlets_business ON outlets(business_id, is_active)',
+    );
     await db.execute(
       'CREATE INDEX idx_sync_queue_status ON sync_queue(table_name, operation)',
     );
@@ -158,6 +180,8 @@ class DatabaseService {
     int oldVersion,
     int newVersion,
   ) async {
+    print('Upgrading database from version $oldVersion to $newVersion');
+
     if (oldVersion < 2) {
       // Migration from stock-based to loading-based structure
       await db.execute('DROP TABLE IF EXISTS stock');
@@ -189,12 +213,40 @@ class DatabaseService {
         'CREATE INDEX idx_loadings_sales_rep ON loadings(sales_rep_id, status)',
       );
     }
+
+    // NEW: Add loading cost support to bills table (version 3)
+    if (oldVersion < 3) {
+      try {
+        // Add new columns to bills table
+        await db.execute(
+          'ALTER TABLE bills ADD COLUMN subtotal_amount REAL DEFAULT 0.0',
+        );
+        await db.execute(
+          'ALTER TABLE bills ADD COLUMN loading_cost REAL DEFAULT 0.0',
+        );
+
+        print('Added subtotal_amount and loading_cost columns to bills table');
+
+        // Update existing bills: set subtotal_amount = total_amount and loading_cost = 0
+        await db.execute('''
+          UPDATE bills 
+          SET subtotal_amount = total_amount, 
+              loading_cost = 0.0 
+          WHERE subtotal_amount IS NULL OR subtotal_amount = 0.0
+        ''');
+
+        print('Updated existing bills with backward compatibility');
+      } catch (e) {
+        print(
+          'Error adding loading cost columns (they might already exist): $e',
+        );
+      }
+    }
   }
 
   // Loading-related methods
   Future<void> syncLoading(Loading loading) async {
     final db = await database;
-
     await db.insert(
       'loadings',
       loading.toSQLite(),
@@ -208,7 +260,6 @@ class DatabaseService {
     String salesRepId,
   ) async {
     final db = await database;
-
     final List<Map<String, dynamic>> maps = await db.query(
       'loadings',
       where:
@@ -318,7 +369,6 @@ class DatabaseService {
 
   Future<List<Map<String, dynamic>>> getBillItems(String billId) async {
     final db = await database;
-
     return await db.query(
       'bill_items',
       where: 'bill_id = ?',
@@ -329,7 +379,6 @@ class DatabaseService {
   // Outlet-related methods
   Future<void> insertOutlet(Map<String, dynamic> outletData) async {
     final db = await database;
-
     await db.insert(
       'outlets',
       outletData,
@@ -342,7 +391,6 @@ class DatabaseService {
     String businessId,
   ) async {
     final db = await database;
-
     return await db.query(
       'outlets',
       where: 'owner_id = ? AND business_id = ?',
@@ -361,7 +409,6 @@ class DatabaseService {
     Map<String, dynamic>? data,
   }) async {
     final db = await database;
-
     await db.insert('sync_queue', {
       'table_name': tableName,
       'record_id': recordId,
@@ -376,19 +423,16 @@ class DatabaseService {
 
   Future<List<Map<String, dynamic>>> getPendingSyncItems() async {
     final db = await database;
-
     return await db.query('sync_queue', orderBy: 'created_at ASC');
   }
 
   Future<void> removeSyncQueueItem(int id) async {
     final db = await database;
-
     await db.delete('sync_queue', where: 'id = ?', whereArgs: [id]);
   }
 
   Future<void> updateSyncRetryCount(int id) async {
     final db = await database;
-
     await db.update(
       'sync_queue',
       {
@@ -403,17 +447,14 @@ class DatabaseService {
   // User session methods
   Future<void> saveUserSession(Map<String, dynamic> sessionData) async {
     final db = await database;
-
     // Clear existing sessions
     await db.delete('user_session');
-
     // Insert new session
     await db.insert('user_session', sessionData);
   }
 
   Future<Map<String, dynamic>?> getCurrentUserSession() async {
     final db = await database;
-
     final List<Map<String, dynamic>> maps = await db.query(
       'user_session',
       where: 'is_active = ?',
@@ -427,7 +468,6 @@ class DatabaseService {
 
   Future<void> clearUserSession() async {
     final db = await database;
-
     await db.delete('user_session');
   }
 
