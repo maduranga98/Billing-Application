@@ -210,9 +210,7 @@ class BillPrinterService {
     }
   }
 
-  // Replace the _generateOptimizedBill method in your BillPrinterService class
-
-  // Generate optimized bill with 68-character paper width (64 content + 4 margins)
+  // UPDATED: Generate optimized bill with loading cost support
   static List<int> _generateOptimizedReceipt(PrintBill bill) {
     List<int> bytes = [];
 
@@ -267,16 +265,13 @@ class BillPrinterService {
     bytes += _generator!.text(addMargin(mainSeparator));
     bytes += _generator!.feed(1);
 
-    // === BILL INFORMATION ===
+    // === BILL INFORMATION IN ONE ROW ===
+    String billInfo =
+        'Bill: LB${bill.billNumber}'.padRight(32) +
+        '${DateFormat('dd/MM/yyyy HH:mm').format(bill.billDate)}';
     bytes += _generator!.text(
-      addMargin('Bill No: LB${bill.billNumber}'),
+      addMargin(billInfo),
       styles: const PosStyles(bold: true),
-    );
-
-    bytes += _generator!.text(
-      addMargin(
-        'Date: ${DateFormat('dd/MM/yyyy HH:mm').format(bill.billDate)}',
-      ),
     );
 
     bytes += _generator!.feed(1);
@@ -354,27 +349,46 @@ class BillPrinterService {
     bytes += _generator!.text(addMargin(lightSeparator));
     bytes += _generator!.feed(1);
 
-    // === TOTALS SECTION ===
-    // Right-aligned totals
-    if (bill.discountAmount > 0) {
-      String subtotalLine =
-          'Subtotal: Rs. ${(bill.totalAmount + bill.discountAmount).toStringAsFixed(2)}';
-      bytes += _generator!.text(addMargin(subtotalLine.padLeft(contentWidth)));
+    // === TOTALS SECTION WITH LOADING COST ===
+    // Calculate subtotal (items only)
+    double itemsSubtotal = bill.subtotalAmount;
 
+    // Right-aligned totals (reduced by 4 characters from the right edge)
+    const int totalsWidth = contentWidth - 4; // 64 - 4 = 60 characters
+
+    String subtotalLine =
+        'Items Subtotal: Rs. ${itemsSubtotal.toStringAsFixed(2)}';
+    bytes += _generator!.text(addMargin(subtotalLine.padLeft(totalsWidth)));
+
+    // ADDED: Loading cost line (if > 0)
+    if (bill.loadingCost > 0) {
+      String loadingLine =
+          'Loading Cost: Rs. ${bill.loadingCost.toStringAsFixed(2)}';
+      bytes += _generator!.text(
+        addMargin(loadingLine.padLeft(totalsWidth)),
+        styles: const PosStyles(bold: true), // Make loading cost bold
+      );
+    }
+
+    // Discount (if applicable)
+    if (bill.discountAmount > 0) {
       String discountLine =
           'Discount: Rs. -${bill.discountAmount.toStringAsFixed(2)}';
-      bytes += _generator!.text(addMargin(discountLine.padLeft(contentWidth)));
+      bytes += _generator!.text(addMargin(discountLine.padLeft(totalsWidth)));
     }
 
+    // Tax (if applicable)
     if (bill.taxAmount > 0) {
       String taxLine = 'Tax: Rs. ${bill.taxAmount.toStringAsFixed(2)}';
-      bytes += _generator!.text(addMargin(taxLine.padLeft(contentWidth)));
+      bytes += _generator!.text(addMargin(taxLine.padLeft(totalsWidth)));
     }
 
-    // Grand total with emphasis
+    bytes += _generator!.text(addMargin(lightSeparator));
+
+    // Grand total with emphasis (includes loading cost)
     String totalLine = 'TOTAL: Rs. ${bill.totalAmount.toStringAsFixed(2)}';
     bytes += _generator!.text(
-      addMargin(totalLine.padLeft(contentWidth)),
+      addMargin(totalLine.padLeft(totalsWidth)),
       styles: const PosStyles(bold: true, height: PosTextSize.size2),
     );
 
@@ -389,28 +403,27 @@ class BillPrinterService {
 
     bytes += _generator!.feed(2);
 
-    // === SIGNATURE SECTION ===
-    // Signature lines only
-    String signatureLine = '${'_' * 30}      ${'_' * 30}';
-    bytes += _generator!.text(addMargin(signatureLine));
-    bytes += _generator!.feed(1);
-
-    // === DOTTED SEPARATOR ===
-    bytes += _generator!.text(addMargin(dottedSeparator));
-    bytes += _generator!.feed(1);
-
-    // === SIGNATURE LABELS (Below dotted line) ===
-    String signatureLabels =
-        'Customer Signature'.padRight(32) + 'Sales Rep Signature';
-    bytes += _generator!.text(addMargin(signatureLabels));
-    bytes += _generator!.feed(2);
-
-    // === FOOTER (Below dotted line) ===
+    // === THANK YOU MESSAGE (Above dotted line) ===
     bytes += _generator!.text(
       centerWithMargin('Thank you for your business!'),
       styles: const PosStyles(bold: true),
     );
 
+    bytes += _generator!.feed(2);
+
+    // === SIGNATURE SECTION (Above dotted line) ===
+    String signatureLine = '${'_' * 30}    ${'_' * 30}';
+    bytes += _generator!.text(addMargin(signatureLine));
+    bytes += _generator!.feed(1);
+
+    // Signature labels
+    String signatureLabels =
+        'Customer Signature'.padRight(32) + 'Sales Rep Signature';
+    bytes += _generator!.text(addMargin(signatureLabels));
+    bytes += _generator!.feed(1);
+
+    // === DOTTED SEPARATOR ===
+    bytes += _generator!.text(addMargin(dottedSeparator));
     bytes += _generator!.feed(1);
 
     // === SOLUTION BY SECTION (Below dotted line) ===
@@ -421,7 +434,7 @@ class BillPrinterService {
     bytes += _generator!.text(centerWithMargin('Mobile: +94 76 620 6555'));
 
     // Bottom spacing and cut
-    bytes += _generator!.feed(3);
+    bytes += _generator!.feed(2);
     bytes += _generator!.cut();
 
     return bytes;

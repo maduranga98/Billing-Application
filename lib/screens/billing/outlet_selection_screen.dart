@@ -192,7 +192,7 @@ class _OutletSelectionScreenState extends State<OutletSelectionScreen> {
                 decoration: BoxDecoration(
                   color: _getOutletTypeColor(
                     outlet.outletType,
-                  ).withOpacity(0.1),
+                  ).withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(

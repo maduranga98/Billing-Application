@@ -1,8 +1,8 @@
-// lib/screens/billing/item_detail_dialog.dart (Enhanced with Price Selection)
+// lib/screens/billing/item_detail_dialog.dart (Fixed for Enhanced Provider)
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:lumorabiz_billing/providers/billing_provider.dart';
 import 'package:provider/provider.dart';
-import '../../providers/billing_provider.dart';
 import '../../models/loading_item.dart';
 
 class ItemDetailDialog extends StatefulWidget {
@@ -28,18 +28,10 @@ class _ItemDetailDialogState extends State<ItemDetailDialog> {
     _selectedPrice = widget.item.pricePerKg;
     _priceController.text = _selectedPrice.toStringAsFixed(2);
 
-    // Set initial quantity if item is already selected
-    final billingProvider = context.read<BillingProvider>();
-    final existingItem = billingProvider.getSelectedItem(widget.item.productId);
-
-    if (existingItem != null) {
-      _selectedQuantity = existingItem.quantity;
-      _selectedPrice = existingItem.unitPrice;
-      _quantityController.text = _selectedQuantity.toString();
-      _priceController.text = _selectedPrice.toStringAsFixed(2);
-    } else {
-      _quantityController.text = '1';
-    }
+    // FIXED: Don't pre-fill with existing item data for multiple selection
+    // Always start fresh to allow multiple entries
+    _quantityController.text = '1';
+    _selectedQuantity = 1;
   }
 
   @override
@@ -478,14 +470,17 @@ class _ItemDetailDialogState extends State<ItemDetailDialog> {
                   // Remove Button (if item is already selected)
                   Consumer<BillingProvider>(
                     builder: (context, billingProvider, child) {
-                      final isSelected = billingProvider.isItemSelected(
-                        widget.item.productId,
-                      );
+                      final hasSelectedItems =
+                          billingProvider
+                              .getSelectedItemsForProduct(
+                                widget.item.productCode,
+                              )
+                              .isNotEmpty;
 
-                      if (isSelected) {
+                      if (hasSelectedItems) {
                         return Expanded(
                           child: OutlinedButton(
-                            onPressed: _removeItem,
+                            onPressed: _showRemoveOptions,
                             style: OutlinedButton.styleFrom(
                               foregroundColor: Colors.red.shade600,
                               side: BorderSide(color: Colors.red.shade300),
@@ -495,7 +490,7 @@ class _ItemDetailDialogState extends State<ItemDetailDialog> {
                               ),
                             ),
                             child: const Text(
-                              'Remove',
+                              'Remove Items',
                               style: TextStyle(fontWeight: FontWeight.w600),
                             ),
                           ),
@@ -507,16 +502,19 @@ class _ItemDetailDialogState extends State<ItemDetailDialog> {
 
                   Consumer<BillingProvider>(
                     builder: (context, billingProvider, child) {
-                      final isSelected = billingProvider.isItemSelected(
-                        widget.item.productId,
-                      );
-                      return isSelected
+                      final hasSelectedItems =
+                          billingProvider
+                              .getSelectedItemsForProduct(
+                                widget.item.productCode,
+                              )
+                              .isNotEmpty;
+                      return hasSelectedItems
                           ? const SizedBox(width: 16)
                           : const SizedBox.shrink();
                     },
                   ),
 
-                  // Add/Update Button
+                  // Add Button - CHANGED: Always shows "Add to Bill"
                   Expanded(
                     child: ElevatedButton(
                       onPressed: _isPriceValid() ? _addOrUpdateItem : null,
@@ -531,16 +529,9 @@ class _ItemDetailDialogState extends State<ItemDetailDialog> {
                           borderRadius: BorderRadius.circular(8),
                         ),
                       ),
-                      child: Consumer<BillingProvider>(
-                        builder: (context, billingProvider, child) {
-                          final isSelected = billingProvider.isItemSelected(
-                            widget.item.productId,
-                          );
-                          return Text(
-                            isSelected ? 'Update Item' : 'Add to Bill',
-                            style: const TextStyle(fontWeight: FontWeight.w600),
-                          );
-                        },
+                      child: const Text(
+                        'Add to Bill',
+                        style: TextStyle(fontWeight: FontWeight.w600),
                       ),
                     ),
                   ),
@@ -580,7 +571,8 @@ class _ItemDetailDialogState extends State<ItemDetailDialog> {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
         decoration: BoxDecoration(
-          color: isSelected ? color.withOpacity(0.1) : Colors.grey.shade50,
+          color:
+              isSelected ? color.withValues(alpha: 0.1) : Colors.grey.shade50,
           borderRadius: BorderRadius.circular(6),
           border: Border.all(
             color: isSelected ? color : Colors.grey.shade300,
@@ -603,29 +595,131 @@ class _ItemDetailDialogState extends State<ItemDetailDialog> {
   void _addOrUpdateItem() {
     final billingProvider = context.read<BillingProvider>();
 
-    // Add or update item with custom price
-    billingProvider.addItemToBillWithPrice(
-      widget.item,
-      _selectedQuantity,
-      _selectedPrice,
+    try {
+      // FIXED: Always add as new item (multiple selection)
+      billingProvider.addItemToBill(
+        item: widget.item,
+        quantity: _selectedQuantity,
+        customPrice: _selectedPrice,
+      );
+
+      Navigator.pop(context);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${widget.item.productName} added to bill'),
+          backgroundColor: Colors.green.shade600,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.toString()),
+          backgroundColor: Colors.red.shade600,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
+  void _showRemoveOptions() {
+    final billingProvider = context.read<BillingProvider>();
+    final selectedItems = billingProvider.getSelectedItemsForProduct(
+      widget.item.productCode,
     );
 
-    Navigator.pop(context);
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          '${widget.item.productName} ${billingProvider.isItemSelected(widget.item.productId) ? 'updated' : 'added'} to bill',
-        ),
-        backgroundColor: Colors.green.shade600,
-        duration: const Duration(seconds: 2),
-      ),
+    showModalBottomSheet(
+      context: context,
+      builder:
+          (context) => Container(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Remove Items - ${widget.item.productName}',
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                ...selectedItems
+                    .map(
+                      (selectedItem) => ListTile(
+                        title: Text(
+                          '${selectedItem.quantity} bags @ Rs.${selectedItem.unitPrice.toStringAsFixed(2)}/kg',
+                        ),
+                        subtitle: Text(
+                          'Total: Rs.${selectedItem.totalPrice.toStringAsFixed(2)}',
+                        ),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete, color: Colors.red),
+                          onPressed: () {
+                            billingProvider.removeItemFromBill(
+                              selectedItem.productId,
+                            );
+                            Navigator.pop(context);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Item removed from bill'),
+                                backgroundColor: Colors.orange.shade600,
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    )
+                    .toList(),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('Cancel'),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () {
+                          // Remove all items for this product
+                          for (final item in selectedItems) {
+                            billingProvider.removeItemFromBill(item.productId);
+                          }
+                          Navigator.pop(context);
+                          Navigator.pop(context); // Close dialog too
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                'All ${widget.item.productName} items removed',
+                              ),
+                              backgroundColor: Colors.red.shade600,
+                            ),
+                          );
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red.shade600,
+                          foregroundColor: Colors.white,
+                        ),
+                        child: const Text('Remove All'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
     );
   }
 
   void _removeItem() {
     final billingProvider = context.read<BillingProvider>();
-    billingProvider.removeItemFromBill(widget.item.productId);
+    billingProvider.removeItemFromBillByProductId(
+      widget.item.productCode,
+    ); // Fixed method
 
     Navigator.pop(context);
 
