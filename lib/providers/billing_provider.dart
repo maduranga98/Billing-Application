@@ -1,4 +1,4 @@
-// lib/providers/billing_provider.dart (Updated with Custom Price Support)
+// lib/providers/billing_provider.dart (Updated with Loading Cost and Duplicate Items Support)
 import 'package:flutter/material.dart';
 import 'package:lumorabiz_billing/services/outlet/outlet_service.dart';
 
@@ -26,6 +26,10 @@ class BillingProvider extends ChangeNotifier {
   List<SelectedBillItem> _selectedItems = [];
   List<SelectedBillItem> get selectedItems => _selectedItems;
 
+  // Loading cost for the bill
+  double _loadingCost = 0.0;
+  double get loadingCost => _loadingCost;
+
   // Loading states
   bool _isLoadingOutlets = false;
   bool _isLoadingItems = false;
@@ -35,9 +39,14 @@ class BillingProvider extends ChangeNotifier {
   bool get isLoadingItems => _isLoadingItems;
   bool get isCreatingBill => _isCreatingBill;
 
-  // Calculate total amount with custom prices
-  double get totalAmount {
+  // Calculate subtotal (items only)
+  double get subtotalAmount {
     return _selectedItems.fold(0.0, (sum, item) => sum + item.totalPrice);
+  }
+
+  // Calculate total amount including loading cost
+  double get totalAmount {
+    return subtotalAmount + _loadingCost;
   }
 
   // Initialize billing process
@@ -84,12 +93,18 @@ class BillingProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  // Set loading cost
+  void setLoadingCost(double cost) {
+    _loadingCost = cost >= 0 ? cost : 0.0;
+    notifyListeners();
+  }
+
   // Add item to bill with default price
   void addItemToBill(LoadingItem item, int quantity) {
     addItemToBillWithPrice(item, quantity, item.pricePerKg);
   }
 
-  // Add item to bill with custom price
+  // Add item to bill with custom price - UPDATED to allow duplicates
   void addItemToBillWithPrice(
     LoadingItem item,
     int quantity,
@@ -107,73 +122,46 @@ class BillingProvider extends ChangeNotifier {
       throw Exception('Invalid quantity');
     }
 
-    final existingIndex = _selectedItems.indexWhere(
-      (selectedItem) => selectedItem.productId == item.productId,
+    // CHANGED: Always add as new item, even if same product code exists
+    // Generate unique ID for the selected item
+    final uniqueId =
+        '${item.productId}_${DateTime.now().millisecondsSinceEpoch}';
+
+    final selectedItem = SelectedBillItem(
+      productId: uniqueId, // Use unique ID instead of item.productId
+      originalProductId: item.productId, // Keep original for reference
+      productName: item.productName,
+      productCode: item.productCode,
+      quantity: quantity,
+      unitPrice: customPrice,
+      bagSize: item.bagSize,
+      unit: item.unit,
+      category: item.category,
+      totalPrice: quantity * item.bagSize * customPrice,
     );
 
-    if (existingIndex != -1) {
-      // Update existing item with new quantity and price
-      _selectedItems[existingIndex] = SelectedBillItem(
-        productId: item.productId,
-        productName: item.productName,
-        productCode: item.productCode,
-        quantity: quantity,
-        unitPrice: customPrice,
-        bagSize: item.bagSize,
-        unit: item.unit,
-        category: item.category,
-        totalPrice:
-            quantity *
-            item.bagSize *
-            customPrice, // quantity * bagSize * pricePerKg
-      );
-    } else {
-      // Add new item
-      final selectedItem = SelectedBillItem(
-        productId: item.productId,
-        productName: item.productName,
-        productCode: item.productCode,
-        quantity: quantity,
-        unitPrice: customPrice,
-        bagSize: item.bagSize,
-        unit: item.unit,
-        category: item.category,
-        totalPrice:
-            quantity *
-            item.bagSize *
-            customPrice, // quantity * bagSize * pricePerKg
-      );
-      _selectedItems.add(selectedItem);
-    }
-
+    _selectedItems.add(selectedItem);
     notifyListeners();
   }
 
-  // Remove item from bill
-  void removeItemFromBill(String productId) {
-    _selectedItems.removeWhere((item) => item.productId == productId);
+  // Remove item from bill using unique ID
+  void removeItemFromBill(String uniqueId) {
+    _selectedItems.removeWhere((item) => item.productId == uniqueId);
     notifyListeners();
   }
 
-  // Update item quantity
-  void updateItemQuantity(String productId, int newQuantity) {
+  // Update item quantity using unique ID
+  void updateItemQuantity(String uniqueId, int newQuantity) {
     final index = _selectedItems.indexWhere(
-      (item) => item.productId == productId,
+      (item) => item.productId == uniqueId,
     );
     if (index != -1) {
       final item = _selectedItems[index];
       if (newQuantity <= 0) {
-        removeItemFromBill(productId);
+        removeItemFromBill(uniqueId);
       } else {
-        _selectedItems[index] = SelectedBillItem(
-          productId: item.productId,
-          productName: item.productName,
-          productCode: item.productCode,
+        _selectedItems[index] = item.copyWith(
           quantity: newQuantity,
-          unitPrice: item.unitPrice,
-          bagSize: item.bagSize,
-          unit: item.unit,
-          category: item.category,
           totalPrice: newQuantity * item.bagSize * item.unitPrice,
         );
         notifyListeners();
@@ -181,17 +169,17 @@ class BillingProvider extends ChangeNotifier {
     }
   }
 
-  // Update item price
-  void updateItemPrice(String productId, double newPrice) {
+  // Update item price using unique ID
+  void updateItemPrice(String uniqueId, double newPrice) {
     final index = _selectedItems.indexWhere(
-      (item) => item.productId == productId,
+      (item) => item.productId == uniqueId,
     );
     if (index != -1) {
       final item = _selectedItems[index];
 
-      // Get the LoadingItem to validate price range
+      // Get the LoadingItem to validate price range using originalProductId
       final loadingItem = _availableItems.firstWhere(
-        (availableItem) => availableItem.productId == productId,
+        (availableItem) => availableItem.productId == item.originalProductId,
       );
 
       // Validate price is within range
@@ -201,64 +189,48 @@ class BillingProvider extends ChangeNotifier {
         );
       }
 
-      _selectedItems[index] = SelectedBillItem(
-        productId: item.productId,
-        productName: item.productName,
-        productCode: item.productCode,
-        quantity: item.quantity,
+      _selectedItems[index] = item.copyWith(
         unitPrice: newPrice,
-        bagSize: item.bagSize,
-        unit: item.unit,
-        category: item.category,
         totalPrice: item.quantity * item.bagSize * newPrice,
       );
       notifyListeners();
     }
   }
 
-  // Check if item is selected
-  bool isItemSelected(String productId) {
-    return _selectedItems.any((item) => item.productId == productId);
-  }
-
-  // Get selected quantity for an item
-  int getSelectedQuantity(String productId) {
-    final item = _selectedItems.firstWhere(
-      (item) => item.productId == productId,
-      orElse:
-          () => SelectedBillItem(
-            productId: '',
-            productName: '',
-            productCode: '',
-            quantity: 0,
-            unitPrice: 0.0,
-            bagSize: 0.0,
-            unit: '',
-            category: '',
-            totalPrice: 0.0,
-          ),
+  // Check if item is selected (by original product ID)
+  bool isItemSelected(String originalProductId) {
+    return _selectedItems.any(
+      (item) => item.originalProductId == originalProductId,
     );
-    return item.quantity;
   }
 
-  // Get selected item
-  SelectedBillItem? getSelectedItem(String productId) {
+  // Get total selected quantity for an item (sum of all instances)
+  int getTotalSelectedQuantity(String originalProductId) {
+    return _selectedItems
+        .where((item) => item.originalProductId == originalProductId)
+        .fold(0, (sum, item) => sum + item.quantity);
+  }
+
+  // Get all selected instances of an item
+  List<SelectedBillItem> getSelectedInstances(String originalProductId) {
+    return _selectedItems
+        .where((item) => item.originalProductId == originalProductId)
+        .toList();
+  }
+
+  // Get selected item by unique ID
+  SelectedBillItem? getSelectedItem(String uniqueId) {
     try {
-      return _selectedItems.firstWhere((item) => item.productId == productId);
+      return _selectedItems.firstWhere((item) => item.productId == uniqueId);
     } catch (e) {
       return null;
     }
   }
 
-  // Get selected price for an item
-  double getSelectedPrice(String productId) {
-    final item = getSelectedItem(productId);
-    return item?.unitPrice ?? 0.0;
-  }
-
   // Clear all selected items
   void clearBill() {
     _selectedItems.clear();
+    _loadingCost = 0.0;
     notifyListeners();
   }
 
@@ -272,6 +244,7 @@ class BillingProvider extends ChangeNotifier {
   void resetBilling() {
     _selectedOutlet = null;
     _selectedItems.clear();
+    _loadingCost = 0.0;
     notifyListeners();
   }
 
@@ -285,21 +258,38 @@ class BillingProvider extends ChangeNotifier {
       return {'isValid': false, 'error': 'Please add items to the bill'};
     }
 
-    // Validate quantities against available stock
+    // Validate quantities against available stock (sum by original product ID)
+    final groupedItems = <String, int>{};
     for (final selectedItem in _selectedItems) {
+      final originalProductId = selectedItem.originalProductId;
+      groupedItems[originalProductId] =
+          (groupedItems[originalProductId] ?? 0) + selectedItem.quantity;
+    }
+
+    for (final entry in groupedItems.entries) {
+      final originalProductId = entry.key;
+      final totalQuantity = entry.value;
+
       final availableItem = _availableItems.firstWhere(
-        (item) => item.productId == selectedItem.productId,
+        (item) => item.productId == originalProductId,
+        orElse: () => throw Exception('Item not found: $originalProductId'),
       );
 
-      if (selectedItem.quantity > availableItem.availableQuantity) {
+      if (totalQuantity > availableItem.availableQuantity) {
         return {
           'isValid': false,
           'error':
-              'Insufficient quantity for ${selectedItem.productName}. Available: ${availableItem.availableQuantity}, Required: ${selectedItem.quantity}',
+              'Insufficient quantity for ${availableItem.productName}. Available: ${availableItem.availableQuantity}, Required: $totalQuantity',
         };
       }
+    }
 
-      // Validate price is still within range
+    // Validate prices are still within range
+    for (final selectedItem in _selectedItems) {
+      final availableItem = _availableItems.firstWhere(
+        (item) => item.productId == selectedItem.originalProductId,
+      );
+
       if (selectedItem.unitPrice < availableItem.minPrice ||
           selectedItem.unitPrice > availableItem.maxPrice) {
         return {
@@ -313,7 +303,7 @@ class BillingProvider extends ChangeNotifier {
     return {'isValid': true};
   }
 
-  // Get bill summary
+  // Get bill summary with loading cost
   Map<String, dynamic> getBillSummary() {
     return {
       'itemCount': _selectedItems.length,
@@ -321,6 +311,8 @@ class BillingProvider extends ChangeNotifier {
         0,
         (sum, item) => sum + item.quantity,
       ),
+      'subtotalAmount': subtotalAmount,
+      'loadingCost': _loadingCost,
       'totalAmount': totalAmount,
       'outlet': _selectedOutlet?.outletName ?? 'No outlet selected',
     };
@@ -341,10 +333,26 @@ class BillingProvider extends ChangeNotifier {
     return categorizedItems;
   }
 
+  // Get items grouped by product code (for display purposes)
+  Map<String, List<SelectedBillItem>> get itemsByProductCode {
+    final Map<String, List<SelectedBillItem>> groupedItems = {};
+
+    for (final item in _selectedItems) {
+      final productCode = item.productCode;
+      if (!groupedItems.containsKey(productCode)) {
+        groupedItems[productCode] = [];
+      }
+      groupedItems[productCode]!.add(item);
+    }
+
+    return groupedItems;
+  }
+
   // Helper method to create an empty SelectedBillItem for orElse cases
   SelectedBillItem _createEmptySelectedBillItem() {
     return SelectedBillItem(
       productId: '',
+      originalProductId: '',
       productName: '',
       productCode: '',
       quantity: 0,

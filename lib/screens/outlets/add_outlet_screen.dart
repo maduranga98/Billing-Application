@@ -10,12 +10,11 @@ import 'package:geolocator/geolocator.dart';
 import 'package:provider/provider.dart';
 import 'dart:io';
 import 'dart:convert';
-import 'dart:typed_data';
+import '../../services/local/database_service.dart';
 
 // Import your existing models and services
 import '../../models/user_session.dart';
 import '../../providers/auth_provider.dart';
-import '../../services/local/database_service.dart';
 
 class AddOutletScreen extends StatefulWidget {
   const AddOutletScreen({super.key});

@@ -1,4 +1,4 @@
-// lib/main.dart
+// lib/main.dart (Updated with fixed route configuration)
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:lumorabiz_billing/providers/billing_provider.dart';
@@ -25,7 +25,6 @@ import 'services/auth/auth_service.dart';
 
 // Screens
 import 'screens/auth/login_screen.dart';
-
 import 'screens/loading/loading_list_screen.dart';
 
 // Legacy imports (update these to new structure when ready)
@@ -133,18 +132,36 @@ class LumoraBizApp extends StatelessWidget {
 
           // Legacy routes (update these later)
           '/add-outlet': (context) => const AddOutlet(),
-          '/create-bill': (context) => PrinterSelectionScreen(),
-          '/loading': (context) => LoadingListScreen(),
+          '/create-bill': (context) => const PrinterSelectionScreen(),
+          '/loading': (context) => const LoadingListScreen(),
           '/outlets': (context) => const OutletListScreen(),
           '/billing/outlet-selection':
               (context) => const OutletSelectionScreen(),
           '/billing/items': (context) => const ItemSelectionScreen(),
-          '/billing/preview': (context) => const BillPreviewScreen(),
           '/billing/success': (context) => const BillSuccessScreen(),
           // '/billing': (context) => const BillingScreen(),
           // '/reports': (context) => const ReportsScreen(),
           // '/profile': (context) => const ProfileScreen(),
           // '/settings': (context) => const SettingsScreen(),
+        },
+
+        // Handle dynamic routes with parameters
+        onGenerateRoute: (settings) {
+          switch (settings.name) {
+            case '/billing/preview':
+              // Extract paymentType from route arguments
+              final args = settings.arguments as Map<String, dynamic>?;
+              final paymentType = args?['paymentType'] as String? ?? 'cash';
+
+              return MaterialPageRoute(
+                builder:
+                    (context) => BillPreviewScreen(paymentType: paymentType),
+                settings: settings,
+              );
+
+            default:
+              return null; // Let Flutter handle other routes
+          }
         },
       ),
     );

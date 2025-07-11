@@ -1,6 +1,7 @@
-// lib/models/selected_bill_item.dart (Updated with Custom Price Support)
+// lib/models/selected_bill_item.dart (Updated with Original Product ID Support)
 class SelectedBillItem {
-  final String productId;
+  final String productId; // Unique ID for this bill item instance
+  final String originalProductId; // Original product ID from LoadingItem
   final String productName;
   final String productCode;
   final int quantity; // Number of bags
@@ -13,6 +14,7 @@ class SelectedBillItem {
 
   SelectedBillItem({
     required this.productId,
+    required this.originalProductId,
     required this.productName,
     required this.productCode,
     required this.quantity,
@@ -27,12 +29,17 @@ class SelectedBillItem {
   factory SelectedBillItem.fromLoadingItem(
     dynamic item, // LoadingItem
     int quantity,
-    double customPrice,
-  ) {
+    double customPrice, {
+    String? uniqueId,
+  }) {
     final totalPrice = quantity * item.bagSize * customPrice;
+    final id =
+        uniqueId ??
+        '${item.productId}_${DateTime.now().millisecondsSinceEpoch}';
 
     return SelectedBillItem(
-      productId: item.productId,
+      productId: id,
+      originalProductId: item.productId,
       productName: item.productName,
       productCode: item.productCode,
       quantity: quantity,
@@ -47,6 +54,7 @@ class SelectedBillItem {
   // Copy with new values
   SelectedBillItem copyWith({
     String? productId,
+    String? originalProductId,
     String? productName,
     String? productCode,
     int? quantity,
@@ -62,6 +70,7 @@ class SelectedBillItem {
 
     return SelectedBillItem(
       productId: productId ?? this.productId,
+      originalProductId: originalProductId ?? this.originalProductId,
       productName: productName ?? this.productName,
       productCode: productCode ?? this.productCode,
       quantity: newQuantity,
@@ -77,6 +86,7 @@ class SelectedBillItem {
   Map<String, dynamic> toMap() {
     return {
       'productId': productId,
+      'originalProductId': originalProductId,
       'productName': productName,
       'productCode': productCode,
       'quantity': quantity,
@@ -92,6 +102,10 @@ class SelectedBillItem {
   factory SelectedBillItem.fromMap(Map<String, dynamic> map) {
     return SelectedBillItem(
       productId: map['productId'] ?? '',
+      originalProductId:
+          map['originalProductId'] ??
+          map['productId'] ??
+          '', // Fallback for backward compatibility
       productName: map['productName'] ?? '',
       productCode: map['productCode'] ?? '',
       quantity: map['quantity'] ?? 0,
@@ -106,7 +120,7 @@ class SelectedBillItem {
   // Convert to BillItem for database/API
   Map<String, dynamic> toBillItem() {
     return {
-      'productId': productId,
+      'productId': originalProductId, // Use original product ID for database
       'productName': productName,
       'productCode': productCode,
       'quantity': quantity,
@@ -145,9 +159,19 @@ class SelectedBillItem {
         0.01; // Account for floating point precision
   }
 
+  // Display name with instance info (for showing multiple items of same product)
+  String get displayNameWithInstance {
+    return '$productName (${quantityDisplay} @ ${priceDisplay})';
+  }
+
+  // Check if this is a duplicate item (same product code but different instance)
+  bool isDuplicateOf(SelectedBillItem other) {
+    return productCode == other.productCode && productId != other.productId;
+  }
+
   @override
   String toString() {
-    return 'SelectedBillItem(productId: $productId, productName: $productName, quantity: $quantity, unitPrice: $unitPrice, totalPrice: $totalPrice)';
+    return 'SelectedBillItem(productId: $productId, originalProductId: $originalProductId, productName: $productName, quantity: $quantity, unitPrice: $unitPrice, totalPrice: $totalPrice)';
   }
 
   @override

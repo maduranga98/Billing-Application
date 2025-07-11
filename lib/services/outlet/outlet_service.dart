@@ -1,10 +1,10 @@
-// lib/services/outlet/outlet_service.dart
+// lib/services/outlet/outlet_service.dart (Corrected)
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:lumorabiz_billing/services/local/database_service.dart';
 import 'dart:math' show sin, cos, sqrt, atan2, pi;
 import '../../models/outlet.dart';
 import '../../models/user_session.dart';
-import '../local/database_service.dart';
 
 class OutletService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -122,15 +122,16 @@ class OutletService {
         }
       } else {
         // Get from local database
-        final outletsData = await _dbService.getOutlets(
-          session.ownerId,
-          session.businessId,
+        final db = await _dbService.database;
+        final List<Map<String, dynamic>> maps = await db.query(
+          'outlets',
+          where: 'id = ?',
+          whereArgs: [outletId],
+          limit: 1,
         );
 
-        final outletData =
-            outletsData.where((data) => data['id'] == outletId).toList();
-        if (outletData.isNotEmpty) {
-          return Outlet.fromSQLite(outletData.first);
+        if (maps.isNotEmpty) {
+          return Outlet.fromSQLite(maps.first);
         }
       }
 
@@ -141,6 +142,170 @@ class OutletService {
     }
   }
 
+  // Add new outlet
+  static Future<String> addOutlet({
+    required UserSession session,
+    required Map<String, dynamic> outletData,
+    String? imageUrl,
+  }) async {
+    try {
+      final connectivity = await Connectivity().checkConnectivity();
+      final isOnline =
+          connectivity.isNotEmpty &&
+          connectivity.first != ConnectivityResult.none;
+
+      if (isOnline) {
+        return await _addOutletOnline(session, outletData, imageUrl);
+      } else {
+        return await _addOutletOffline(session, outletData, imageUrl);
+      }
+    } catch (e) {
+      print('Error adding outlet: $e');
+      rethrow;
+    }
+  }
+
+  // Add outlet online
+  static Future<String> _addOutletOnline(
+    UserSession session,
+    Map<String, dynamic> outletData,
+    String? imageUrl,
+  ) async {
+    final docRef =
+        _firestore
+            .collection('owners')
+            .doc(session.ownerId)
+            .collection('businesses')
+            .doc(session.businessId)
+            .collection('outlets')
+            .doc();
+
+    final data = {
+      ...outletData,
+      'id': docRef.id,
+      'imageUrl': imageUrl,
+      'ownerId': session.ownerId,
+      'businessId': session.businessId,
+      'createdBy': session.employeeId,
+      'isActive': true,
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+
+    await docRef.set(data);
+    return docRef.id;
+  }
+
+  // Add outlet offline
+  static Future<String> _addOutletOffline(
+    UserSession session,
+    Map<String, dynamic> outletData,
+    String? imageUrl,
+  ) async {
+    final outletId = DateTime.now().millisecondsSinceEpoch.toString();
+    final now = DateTime.now();
+
+    final data = {
+      ...outletData,
+      'id': outletId,
+      'firebase_image_url': imageUrl,
+      'owner_id': session.ownerId,
+      'business_id': session.businessId,
+      'created_by': session.employeeId,
+      'is_active': 1,
+      'sync_status': 'pending',
+      'created_at': now.millisecondsSinceEpoch,
+      'updated_at': now.millisecondsSinceEpoch,
+    };
+
+    await _dbService.insertOutlet(data);
+    return outletId;
+  }
+
+  // Update outlet
+  static Future<void> updateOutlet({
+    required UserSession session,
+    required String outletId,
+    required Map<String, dynamic> updates,
+  }) async {
+    try {
+      final connectivity = await Connectivity().checkConnectivity();
+      final isOnline =
+          connectivity.isNotEmpty &&
+          connectivity.first != ConnectivityResult.none;
+
+      if (isOnline) {
+        await _firestore
+            .collection('owners')
+            .doc(session.ownerId)
+            .collection('businesses')
+            .doc(session.businessId)
+            .collection('outlets')
+            .doc(outletId)
+            .update({...updates, 'updatedAt': FieldValue.serverTimestamp()});
+      } else {
+        // Update local database
+        final db = await _dbService.database;
+        await db.update(
+          'outlets',
+          {
+            ...updates,
+            'updated_at': DateTime.now().millisecondsSinceEpoch,
+            'sync_status': 'pending',
+          },
+          where: 'id = ?',
+          whereArgs: [outletId],
+        );
+      }
+    } catch (e) {
+      print('Error updating outlet: $e');
+      rethrow;
+    }
+  }
+
+  // Delete outlet (set inactive)
+  static Future<void> deleteOutlet({
+    required UserSession session,
+    required String outletId,
+  }) async {
+    try {
+      final connectivity = await Connectivity().checkConnectivity();
+      final isOnline =
+          connectivity.isNotEmpty &&
+          connectivity.first != ConnectivityResult.none;
+
+      if (isOnline) {
+        await _firestore
+            .collection('owners')
+            .doc(session.ownerId)
+            .collection('businesses')
+            .doc(session.businessId)
+            .collection('outlets')
+            .doc(outletId)
+            .update({
+              'isActive': false,
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+      } else {
+        // Update local database
+        final db = await _dbService.database;
+        await db.update(
+          'outlets',
+          {
+            'is_active': 0,
+            'updated_at': DateTime.now().millisecondsSinceEpoch,
+            'sync_status': 'pending',
+          },
+          where: 'id = ?',
+          whereArgs: [outletId],
+        );
+      }
+    } catch (e) {
+      print('Error deleting outlet: $e');
+      rethrow;
+    }
+  }
+
   // Search outlets
   static Future<List<Outlet>> searchOutlets({
     required UserSession session,
@@ -148,13 +313,12 @@ class OutletService {
   }) async {
     try {
       final outlets = await getOutlets(session);
-
-      if (query.isEmpty) return outlets;
+      final lowerQuery = query.toLowerCase();
 
       return outlets.where((outlet) {
-        return outlet.outletName.toLowerCase().contains(query.toLowerCase()) ||
-            outlet.address.toLowerCase().contains(query.toLowerCase()) ||
-            outlet.ownerName.toLowerCase().contains(query.toLowerCase()) ||
+        return outlet.outletName.toLowerCase().contains(lowerQuery) ||
+            outlet.address.toLowerCase().contains(lowerQuery) ||
+            outlet.ownerName.toLowerCase().contains(lowerQuery) ||
             outlet.phoneNumber.contains(query);
       }).toList();
     } catch (e) {
@@ -163,24 +327,8 @@ class OutletService {
     }
   }
 
-  // Get outlets by type
-  static Future<List<Outlet>> getOutletsByType({
-    required UserSession session,
-    required String outletType,
-  }) async {
-    try {
-      final outlets = await getOutlets(session);
-      return outlets
-          .where((outlet) => outlet.outletType == outletType)
-          .toList();
-    } catch (e) {
-      print('Error getting outlets by type: $e');
-      return [];
-    }
-  }
-
-  // Get outlets in route
-  static Future<List<Outlet>> getOutletsInRoute({
+  // Get outlets by route
+  static Future<List<Outlet>> getOutletsByRoute({
     required UserSession session,
     required String routeId,
   }) async {
@@ -188,12 +336,39 @@ class OutletService {
       final outlets = await getOutlets(session);
       return outlets.where((outlet) => outlet.routeId == routeId).toList();
     } catch (e) {
-      print('Error getting outlets in route: $e');
+      print('Error getting outlets by route: $e');
       return [];
     }
   }
 
-  // Get nearby outlets (if location is available)
+  // Calculate distance between two points (in kilometers)
+  static double calculateDistance({
+    required double lat1,
+    required double lon1,
+    required double lat2,
+    required double lon2,
+  }) {
+    const double earthRadius = 6371; // Earth's radius in kilometers
+
+    final double dLat = _toRadians(lat2 - lat1);
+    final double dLon = _toRadians(lon2 - lon1);
+
+    final double a =
+        sin(dLat / 2) * sin(dLat / 2) +
+        cos(_toRadians(lat1)) *
+            cos(_toRadians(lat2)) *
+            sin(dLon / 2) *
+            sin(dLon / 2);
+    final double c = 2 * atan2(sqrt(a), sqrt(1 - a));
+
+    return earthRadius * c;
+  }
+
+  static double _toRadians(double degrees) {
+    return degrees * (pi / 180);
+  }
+
+  // Get nearby outlets
   static Future<List<Outlet>> getNearbyOutlets({
     required UserSession session,
     required double latitude,
@@ -203,46 +378,76 @@ class OutletService {
     try {
       final outlets = await getOutlets(session);
 
-      return outlets.where((outlet) {
-        final distance = _calculateDistance(
-          latitude,
-          longitude,
-          outlet.latitude,
-          outlet.longitude,
+      final nearbyOutlets = <Outlet>[];
+      for (final outlet in outlets) {
+        final distance = calculateDistance(
+          lat1: latitude,
+          lon1: longitude,
+          lat2: outlet.latitude,
+          lon2: outlet.longitude,
         );
-        return distance <= radiusKm;
-      }).toList();
+
+        if (distance <= radiusKm) {
+          nearbyOutlets.add(outlet);
+        }
+      }
+
+      // Sort by distance
+      nearbyOutlets.sort((a, b) {
+        final distanceA = calculateDistance(
+          lat1: latitude,
+          lon1: longitude,
+          lat2: a.latitude,
+          lon2: a.longitude,
+        );
+        final distanceB = calculateDistance(
+          lat1: latitude,
+          lon1: longitude,
+          lat2: b.latitude,
+          lon2: b.longitude,
+        );
+        return distanceA.compareTo(distanceB);
+      });
+
+      return nearbyOutlets;
     } catch (e) {
       print('Error getting nearby outlets: $e');
       return [];
     }
   }
 
-  // Calculate distance between two coordinates using Haversine formula
-  static double _calculateDistance(
-    double lat1,
-    double lon1,
-    double lat2,
-    double lon2,
-  ) {
-    const double earthRadius = 6371; // Earth's radius in kilometers
+  // Get outlet statistics
+  static Future<Map<String, dynamic>> getOutletStatistics(
+    UserSession session,
+  ) async {
+    try {
+      final outlets = await getOutlets(session);
 
-    final double dLat = _toRadians(lat2 - lat1);
-    final double dLon = _toRadians(lon2 - lon1);
+      final stats = <String, int>{};
+      int totalOutlets = outlets.length;
+      int activeOutlets = 0;
 
-    final double a =
-        (sin(dLat / 2) * sin(dLat / 2)) +
-        (cos(_toRadians(lat1)) *
-            cos(_toRadians(lat2)) *
-            sin(dLon / 2) *
-            sin(dLon / 2));
+      for (final outlet in outlets) {
+        if (outlet.isActive) activeOutlets++;
 
-    final double c = 2 * atan2(sqrt(a), sqrt(1 - a));
+        final type = outlet.outletType;
+        stats[type] = (stats[type] ?? 0) + 1;
+      }
 
-    return earthRadius * c;
-  }
-
-  static double _toRadians(double degrees) {
-    return degrees * (pi / 180);
+      return {
+        'totalOutlets': totalOutlets,
+        'activeOutlets': activeOutlets,
+        'inactiveOutlets': totalOutlets - activeOutlets,
+        'outletsByType': stats,
+      };
+    } catch (e) {
+      print('Error getting outlet statistics: $e');
+      return {
+        'totalOutlets': 0,
+        'activeOutlets': 0,
+        'inactiveOutlets': 0,
+        'outletsByType': <String, int>{},
+      };
+    }
   }
 }
