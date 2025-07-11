@@ -1,4 +1,4 @@
-// lib/screens/billing/bill_preview_screen.dart (Updated with Loading Cost Support)
+// lib/screens/billing/bill_preview_screen.dart (Fixed validation issue)
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
@@ -290,7 +290,7 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
                 Expanded(
                   child: TextFormField(
                     controller: _loadingCostController,
-                    keyboardType: TextInputType.numberWithOptions(
+                    keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
                     ),
                     decoration: InputDecoration(
@@ -586,18 +586,21 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
         );
       }
     } finally {
-      setState(() => _isPrinting = false);
+      if (mounted) {
+        setState(() => _isPrinting = false);
+      }
     }
   }
 
   void _navigateToPrinterSetup() {
-    Navigator.pop(context); // Close bottom sheet if open
     Navigator.push(
       context,
       MaterialPageRoute(builder: (context) => const PrinterSelectionScreen()),
     ).then((_) {
       // Refresh printer status when returning
-      setState(() {});
+      if (mounted) {
+        setState(() {});
+      }
     });
   }
 
@@ -615,12 +618,12 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
       return;
     }
 
-    // Validate bill first
+    // Validate bill first - FIXED: Properly handle the validation result
     final validation = billingProvider.validateBill();
-    if (!validation['isValid']) {
+    if (!(validation['isValid'] ?? false)) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(validation['error']),
+          content: Text(validation['error'] ?? 'Validation failed'),
           backgroundColor: Colors.red,
         ),
       );
@@ -721,7 +724,9 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
         );
       }
     } finally {
-      setState(() => _isCreatingBill = false);
+      if (mounted) {
+        setState(() => _isCreatingBill = false);
+      }
     }
   }
 }

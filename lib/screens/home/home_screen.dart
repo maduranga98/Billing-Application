@@ -1,10 +1,9 @@
-// lib/screens/home/home_screen.dart (Updated with Paddy Prices)
+// lib/screens/home/home_screen.dart (Corrected UI and Routes)
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:intl/intl.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'dart:async';
-
 import '../../providers/auth_provider.dart';
 import '../../providers/loading_provider.dart';
 
@@ -16,73 +15,55 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
-  late AnimationController _animationController;
+  late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
-  late Animation<double> _scaleAnimation;
-
+  late Timer _timer;
   DateTime _currentDateTime = DateTime.now();
-  Timer? _timer;
   bool _isConnected = false;
-  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
 
   @override
   void initState() {
     super.initState();
-    _setupAnimations();
-    _setupConnectivity();
-    _startDateTimeTimer();
+    _fadeController = AnimationController(
+      duration: const Duration(milliseconds: 800),
+      vsync: this,
+    );
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _fadeController, curve: Curves.easeInOut),
+    );
+
+    _fadeController.forward();
+    _checkConnectivity();
+    _startTimer();
     _loadTodaysData();
   }
 
-  void _setupAnimations() {
-    _animationController = AnimationController(
-      duration: const Duration(milliseconds: 1200),
-      vsync: this,
-    );
-
-    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _animationController,
-        curve: const Interval(0.0, 0.5, curve: Curves.easeOut),
-      ),
-    );
-
-    _scaleAnimation = Tween<double>(begin: 0.8, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _animationController,
-        curve: const Interval(0.2, 0.8, curve: Curves.easeOutBack),
-      ),
-    );
-
-    _animationController.forward();
-  }
-
-  void _setupConnectivity() {
-    _connectivitySubscription = Connectivity().onConnectivityChanged.listen((
-      List<ConnectivityResult> results,
-    ) {
-      setState(() {
-        _isConnected =
-            results.isNotEmpty && results.first != ConnectivityResult.none;
-      });
-    });
-
-    // Check initial connectivity
-    Connectivity().checkConnectivity().then((results) {
+  void _startTimer() {
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) {
         setState(() {
-          _isConnected =
-              results.isNotEmpty && results.first != ConnectivityResult.none;
+          _currentDateTime = DateTime.now();
         });
       }
     });
   }
 
-  void _startDateTimeTimer() {
-    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+  void _checkConnectivity() async {
+    final connectivityResult = await Connectivity().checkConnectivity();
+    setState(() {
+      _isConnected =
+          connectivityResult.isNotEmpty &&
+          connectivityResult.first != ConnectivityResult.none;
+    });
+
+    // Listen for connectivity changes
+    Connectivity().onConnectivityChanged.listen((
+      List<ConnectivityResult> result,
+    ) {
       if (mounted) {
         setState(() {
-          _currentDateTime = DateTime.now();
+          _isConnected =
+              result.isNotEmpty && result.first != ConnectivityResult.none;
         });
       }
     });
@@ -101,37 +82,105 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
-    _animationController.dispose();
-    _timer?.cancel();
-    _connectivitySubscription?.cancel();
+    _fadeController.dispose();
+    _timer.cancel();
     super.dispose();
   }
 
-  void _startBillingProcess() {
-    final loadingProvider = context.read<LoadingProvider>();
-    if (loadingProvider.hasLoading) {
-      Navigator.pushNamed(context, '/billing/outlet-selection');
-    } else {
-      _showNoLoadingDialog();
-    }
-  }
-
-  void _showNoLoadingDialog() {
+  void _showProfile() {
+    final authProvider = context.read<AuthProvider>();
     showDialog(
       context: context,
       builder:
           (context) => AlertDialog(
-            title: const Text('No Loading Available'),
-            content: const Text(
-              'You need to have a prepared loading before creating bills. Please contact your supervisor to prepare today\'s loading.',
+            title: const Text('Profile'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Name: ${authProvider.currentSession?.name ?? 'N/A'}'),
+                const SizedBox(height: 8),
+                Text('Email: ${authProvider.currentSession?.email ?? 'N/A'}'),
+                const SizedBox(height: 8),
+                Text('Phone: ${authProvider.currentSession?.phone ?? 'N/A'}'),
+                const SizedBox(height: 8),
+                Text('Role: ${authProvider.currentSession?.role ?? 'N/A'}'),
+              ],
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('OK'),
+                child: const Text('Close'),
               ),
             ],
           ),
+    );
+  }
+
+  void _logout() {
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Logout'),
+            content: const Text('Are you sure you want to logout?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  final authProvider = context.read<AuthProvider>();
+                  authProvider.logout();
+                  Navigator.pushNamedAndRemoveUntil(
+                    context,
+                    '/login',
+                    (route) => false,
+                  );
+                },
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                child: const Text(
+                  'Logout',
+                  style: TextStyle(color: Colors.white),
+                ),
+              ),
+            ],
+          ),
+    );
+  }
+
+  void _getData() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Getting data from database...'),
+        backgroundColor: Colors.blue,
+      ),
+    );
+
+    final loadingProvider = context.read<LoadingProvider>();
+    final authProvider = context.read<AuthProvider>();
+    if (authProvider.currentSession != null) {
+      loadingProvider.refreshLoading(authProvider.currentSession!);
+    }
+  }
+
+  void _uploadData() {
+    if (!_isConnected) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No internet connection. Cannot upload data.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Uploading data to server...'),
+        backgroundColor: Colors.green,
+      ),
     );
   }
 
@@ -140,52 +189,30 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return Scaffold(
       backgroundColor: Colors.grey.shade50,
       appBar: AppBar(
-        title: const Text(
-          'LumoraBiz Billing',
-          style: TextStyle(fontWeight: FontWeight.w600),
-        ),
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.grey.shade800,
         elevation: 0,
+        backgroundColor: Colors.deepPurple.shade600,
+        foregroundColor: Colors.white,
+        title: const Text(
+          'LumoraBiz',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
+        centerTitle: false,
         actions: [
-          _buildConnectivityIndicator(),
-          const SizedBox(width: 16),
-          Consumer<AuthProvider>(
-            builder: (context, authProvider, child) {
-              return PopupMenuButton(
-                icon: Icon(Icons.account_circle, size: 28),
-                itemBuilder:
-                    (context) => <PopupMenuEntry<String>>[
-                      PopupMenuItem<String>(
-                        child: Text(
-                          authProvider.currentSession?.name ?? 'User',
-                        ),
-                        enabled: false,
-                      ),
-                      const PopupMenuDivider(),
-                      PopupMenuItem<String>(
-                        value: 'logout',
-                        child: Row(
-                          children: [
-                            Icon(Icons.logout, size: 18),
-                            const SizedBox(width: 8),
-                            const Text('Logout'),
-                          ],
-                        ),
-                      ),
-                    ],
-                onSelected: (value) {
-                  if (value == 'logout') {
-                    authProvider.logout();
-                    Navigator.pushNamedAndRemoveUntil(
-                      context,
-                      '/login',
-                      (route) => false,
-                    );
-                  }
-                },
-              );
-            },
+          // Profile Button
+          IconButton(
+            onPressed: _showProfile,
+            icon: const Icon(Icons.person),
+            tooltip: 'Profile',
+          ),
+          // Logout Button
+          IconButton(
+            onPressed: _logout,
+            icon: const Icon(Icons.logout),
+            tooltip: 'Logout',
           ),
           const SizedBox(width: 8),
         ],
@@ -207,15 +234,20 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildDateTimeCard(),
-                const SizedBox(height: 16),
-                _buildTodaysRouteCard(),
-                const SizedBox(height: 16),
-                _buildPaddyPricesCard(), // New paddy prices card
-                const SizedBox(height: 16),
-                _buildLoadingStatusCard(),
+                // Date and Route Info (Simple Text)
+                _buildInfoSection(),
                 const SizedBox(height: 24),
-                _buildQuickActions(),
+
+                // Today's Prices Section
+                _buildTodaysPricesSection(),
+                const SizedBox(height: 24),
+
+                // Data Management Buttons
+                _buildDataManagementSection(),
+                const SizedBox(height: 24),
+
+                // Main Action Buttons
+                _buildMainActionsSection(),
                 const SizedBox(height: 32),
               ],
             ),
@@ -225,410 +257,224 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildConnectivityIndicator() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        color: _isConnected ? Colors.green.shade200 : Colors.red.shade200,
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            _isConnected ? Icons.wifi : Icons.wifi_off,
-            color: _isConnected ? Colors.green.shade700 : Colors.red.shade700,
-            size: 16,
+  Widget _buildInfoSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Date Info
+        Text(
+          'Date: ${DateFormat('EEEE, MMMM d, y').format(_currentDateTime)}',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: Colors.grey.shade800,
           ),
-          const SizedBox(width: 8),
-          Text(
-            _isConnected ? 'Online' : 'Offline',
-            style: TextStyle(
-              color: _isConnected ? Colors.green.shade700 : Colors.red.shade700,
-              fontWeight: FontWeight.w600,
-              fontSize: 12,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+        ),
+        const SizedBox(height: 8),
 
-  Widget _buildDateTimeCard() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.shade200,
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.schedule, color: Colors.grey.shade600, size: 24),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+        // Today's Route
+        Consumer<LoadingProvider>(
+          builder: (context, loadingProvider, child) {
+            return Row(
               children: [
-                Text(
-                  DateFormat('EEEE, MMMM d, y').format(_currentDateTime),
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade800,
+                Expanded(
+                  child: Text(
+                    'Today Route: ${loadingProvider.hasRouteContext ? loadingProvider.routeDisplayName : "No route assigned"}',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey.shade800,
+                    ),
                   ),
                 ),
-                Text(
-                  DateFormat('hh:mm:ss a').format(_currentDateTime),
-                  style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTodaysRouteCard() {
-    return Consumer<LoadingProvider>(
-      builder: (context, loadingProvider, child) {
-        return Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Colors.blue.shade600, Colors.blue.shade700],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.blue.shade200,
-                blurRadius: 8,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.route, color: Colors.white, size: 24),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'Today\'s Route',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      loadingProvider.hasRouteContext ? 'Active' : 'Pending',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Text(
-                loadingProvider.routeDisplayName,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              if (loadingProvider.currentRouteAreas.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text(
-                  'Areas: ${loadingProvider.routeAreasText}',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.9),
-                    fontSize: 14,
-                  ),
-                ),
-              ],
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  // NEW: Paddy Prices Card
-  Widget _buildPaddyPricesCard() {
-    return Consumer<LoadingProvider>(
-      builder: (context, loadingProvider, child) {
-        final loading = loadingProvider.currentLoading;
-        final paddyPrices = loading?.todayPaddyPrices;
-        final priceDate = loading?.paddyPriceDate;
-
-        return Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Colors.green.shade600, Colors.green.shade700],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.green.shade200,
-                blurRadius: 8,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.grain, color: Colors.white, size: 24),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'Today\'s Paddy Prices',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  if (priceDate != null)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        priceDate,
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              if (paddyPrices != null && paddyPrices.isNotEmpty) ...[
-                // Display each paddy price
-                ...paddyPrices.entries.map((entry) {
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          entry.key,
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.9),
-                            fontSize: 16,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        Text(
-                          'Rs.${entry.value}/kg',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                }).toList(),
-              ] else ...[
-                // No prices available
+                // Connection Status
                 Container(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(8),
+                    color:
+                        _isConnected
+                            ? Colors.green.shade100
+                            : Colors.red.shade100,
+                    border: Border.all(
+                      color:
+                          _isConnected
+                              ? Colors.green.shade300
+                              : Colors.red.shade300,
+                    ),
                   ),
                   child: Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
-                        Icons.info_outline,
-                        color: Colors.white.withOpacity(0.8),
-                        size: 20,
+                        _isConnected ? Icons.wifi : Icons.wifi_off,
+                        color:
+                            _isConnected
+                                ? Colors.green.shade700
+                                : Colors.red.shade700,
+                        size: 14,
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          'No paddy prices set for today',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.9),
-                            fontSize: 14,
-                          ),
+                      const SizedBox(width: 4),
+                      Text(
+                        _isConnected ? 'Online' : 'Offline',
+                        style: TextStyle(
+                          color:
+                              _isConnected
+                                  ? Colors.green.shade700
+                                  : Colors.red.shade700,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 12,
                         ),
                       ),
                     ],
                   ),
                 ),
               ],
-            ],
-          ),
-        );
-      },
+            );
+          },
+        ),
+      ],
     );
   }
 
-  Widget _buildLoadingStatusCard() {
-    return Consumer<LoadingProvider>(
-      builder: (context, loadingProvider, child) {
-        return Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.grey.shade200,
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(
-                    Icons.inventory_2,
-                    color: Colors.orange.shade600,
-                    size: 24,
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    'Today\'s Loading',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.grey.shade800,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              if (loadingProvider.isLoading) ...[
-                Center(
-                  child: CircularProgressIndicator(
-                    color: Colors.orange.shade600,
-                  ),
-                ),
-              ] else if (loadingProvider.hasLoading) ...[
-                _buildLoadingStats(loadingProvider),
-              ] else ...[
-                _buildNoLoadingMessage(),
-              ],
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: () {
-                    Navigator.pushNamed(context, '/loading');
-                  },
-                  icon: const Icon(Icons.visibility, size: 18),
-                  label: const Text('Review Items'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.orange.shade600,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildLoadingStats(LoadingProvider loadingProvider) {
-    final loading = loadingProvider.currentLoading!;
-
+  Widget _buildTodaysPricesSection() {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: _buildStatItem(
-                'Items',
-                '${loading.itemCount}',
-                Icons.inventory,
-                Colors.blue,
-              ),
-            ),
-            Expanded(
-              child: _buildStatItem(
-                'Total Bags',
-                '${loading.totalBags}',
-                Icons.shopping_bag,
-                Colors.green,
-              ),
-            ),
-          ],
+        Text(
+          "Today's Prices",
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: Colors.grey.shade800,
+          ),
         ),
         const SizedBox(height: 12),
+
+        Consumer<LoadingProvider>(
+          builder: (context, loadingProvider, child) {
+            final loading = loadingProvider.currentLoading;
+            final paddyPrices = loading?.todayPaddyPrices;
+
+            if (loadingProvider.isLoading) {
+              return Container(
+                height: 100,
+                alignment: Alignment.center,
+                child: const CircularProgressIndicator(),
+              );
+            }
+
+            if (paddyPrices == null || paddyPrices.isEmpty) {
+              return Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey.shade300),
+                ),
+                child: Text(
+                  'No paddy prices set for today',
+                  style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
+                  textAlign: TextAlign.center,
+                ),
+              );
+            }
+
+            return Column(
+              children:
+                  paddyPrices.entries.map((entry) {
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.grey.shade200),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            entry.key,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          Text(
+                            'Rs.${entry.value}/kg',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.green.shade700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDataManagementSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          "Data Management",
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: Colors.grey.shade800,
+          ),
+        ),
+        const SizedBox(height: 12),
+
         Row(
           children: [
             Expanded(
-              child: _buildStatItem(
-                'Weight',
-                '${loading.totalWeight}kg',
-                Icons.scale,
-                Colors.orange,
+              child: ElevatedButton.icon(
+                onPressed: _getData,
+                icon: const Icon(Icons.download, size: 18),
+                label: const Text('Get Data'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue.shade600,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
               ),
             ),
+            const SizedBox(width: 12),
             Expanded(
-              child: _buildStatItem(
-                'Value',
-                'Rs.${NumberFormat('#,##0').format(loading.totalValue)}',
-                Icons.attach_money,
-                Colors.purple,
+              child: ElevatedButton.icon(
+                onPressed: _isConnected ? _uploadData : null,
+                icon: const Icon(Icons.upload, size: 18),
+                label: const Text('Upload Data'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor:
+                      _isConnected
+                          ? Colors.green.shade600
+                          : Colors.grey.shade400,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
               ),
             ),
           ],
@@ -637,195 +483,140 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildStatItem(
-    String label,
-    String value,
-    IconData icon,
-    Color color,
-  ) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 4),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, color: color, size: 20),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
+  Widget _buildMainActionsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          "Main Actions",
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: Colors.grey.shade800,
           ),
-          Text(
-            label,
-            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-          ),
-        ],
-      ),
-    );
-  }
+        ),
+        const SizedBox(height: 12),
 
-  Widget _buildNoLoadingMessage() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.red.shade50,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.red.shade200),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.warning, color: Colors.red.shade600, size: 24),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'No Loading Available',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    color: Colors.red.shade700,
+        GridView.count(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          crossAxisCount: 2,
+          mainAxisSpacing: 12,
+          crossAxisSpacing: 12,
+          childAspectRatio: 1.4,
+          children: [
+            _buildActionButton(
+              title: 'Create Bill',
+              subtitle: 'New billing',
+              icon: Icons.receipt_long,
+              color: Colors.blue,
+              onTap:
+                  () =>
+                      Navigator.pushNamed(context, '/billing/outlet-selection'),
+            ),
+            _buildActionButton(
+              title: 'Add Customer',
+              subtitle: 'New outlet',
+              icon: Icons.store_outlined,
+              color: Colors.green,
+              onTap: () => Navigator.pushNamed(context, '/add-outlet'),
+            ),
+            _buildActionButton(
+              title: 'Stock',
+              subtitle: 'Current stock',
+              icon: Icons.inventory,
+              color: Colors.orange,
+              onTap: () => Navigator.pushNamed(context, '/loading'),
+            ),
+            _buildActionButton(
+              title: 'Daily Summary',
+              subtitle: 'Bill summary',
+              icon: Icons.assessment,
+              color: Colors.purple,
+              onTap: () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Daily Summary feature coming soon'),
                   ),
-                ),
-                Text(
-                  'Contact supervisor to prepare loading',
-                  style: TextStyle(fontSize: 12, color: Colors.red.shade600),
-                ),
-              ],
+                );
+              },
             ),
-          ),
-        ],
-      ),
+            _buildActionButton(
+              title: 'View Bills',
+              subtitle: 'Created bills',
+              icon: Icons.list_alt,
+              color: Colors.indigo,
+              onTap: () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('View Bills feature coming soon'),
+                  ),
+                );
+              },
+            ),
+            _buildActionButton(
+              title: 'Outlets',
+              subtitle: 'Manage outlets',
+              icon: Icons.business,
+              color: Colors.teal,
+              onTap: () => Navigator.pushNamed(context, '/outlets'),
+            ),
+          ],
+        ),
+      ],
     );
   }
 
-  Widget _buildQuickActions() {
-    return ScaleTransition(
-      scale: _scaleAnimation,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Quick Actions',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey.shade800,
-            ),
-          ),
-          const SizedBox(height: 16),
+  Widget _buildActionButton({
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required Color color,
+    VoidCallback? onTap,
+  }) {
+    final isEnabled = onTap != null;
 
-          // Primary actions
-          Row(
-            children: [
-              Expanded(
-                child: _buildActionCard(
-                  'Create Bill',
-                  'Start new billing',
-                  Icons.receipt_long,
-                  Colors.blue,
-                  () => _startBillingProcess(),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildActionCard(
-                  'Add Outlet',
-                  'Register new outlet',
-                  Icons.store_outlined,
-                  Colors.green,
-                  () => Navigator.pushNamed(context, '/add-outlet'),
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 12),
-
-          // Secondary actions
-          Row(
-            children: [
-              Expanded(
-                child: _buildActionCard(
-                  'View Loading',
-                  'Check inventory',
-                  Icons.inventory_2_outlined,
-                  Colors.orange,
-                  () => Navigator.pushNamed(context, '/loading'),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildActionCard(
-                  'Print Setup',
-                  'Configure printer',
-                  Icons.print_outlined,
-                  Colors.purple,
-                  () => Navigator.pushNamed(context, '/printer-select'),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildActionCard(
-    String title,
-    String subtitle,
-    IconData icon,
-    Color color,
-    VoidCallback onTap,
-  ) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(8),
           border: Border.all(color: Colors.grey.shade200),
           boxShadow: [
             BoxShadow(
               color: Colors.grey.shade100,
-              blurRadius: 4,
-              offset: const Offset(0, 2),
+              blurRadius: 2,
+              offset: const Offset(0, 1),
             ),
           ],
         ),
         child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(icon, color: color, size: 24),
+            Icon(
+              icon,
+              color: isEnabled ? color : Colors.grey.shade400,
+              size: 32,
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             Text(
               title,
               style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
-                color: Colors.grey.shade800,
+                color: isEnabled ? Colors.grey.shade800 : Colors.grey.shade500,
               ),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 2),
             Text(
               subtitle,
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+              style: TextStyle(
+                fontSize: 11,
+                color: isEnabled ? Colors.grey.shade600 : Colors.grey.shade400,
+              ),
               textAlign: TextAlign.center,
             ),
           ],

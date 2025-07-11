@@ -149,7 +149,7 @@ class _LoadingListScreenState extends State<LoadingListScreen>
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.green.shade200.withOpacity(0.5),
+            color: Colors.green.shade200.withValues(alpha: 0.5),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
@@ -160,7 +160,7 @@ class _LoadingListScreenState extends State<LoadingListScreen>
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
+              color: Colors.white.withValues(alpha: 0.2),
               borderRadius: BorderRadius.circular(12),
             ),
             child: const Icon(Icons.route, color: Colors.white, size: 24),
@@ -182,7 +182,7 @@ class _LoadingListScreenState extends State<LoadingListScreen>
                 Text(
                   'Areas: ${loadingProvider.routeAreasText}',
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.9),
+                    color: Colors.white.withValues(alpha: 0.9),
                     fontSize: 14,
                   ),
                 ),

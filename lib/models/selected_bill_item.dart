@@ -1,4 +1,4 @@
-// lib/models/selected_bill_item.dart (Updated with Original Product ID Support)
+// lib/models/selected_bill_item.dart (Complete Updated Version)
 class SelectedBillItem {
   final String productId; // Unique ID for this bill item instance
   final String originalProductId; // Original product ID from LoadingItem
@@ -35,11 +35,11 @@ class SelectedBillItem {
     final totalPrice = quantity * item.bagSize * customPrice;
     final id =
         uniqueId ??
-        '${item.productId}_${DateTime.now().millisecondsSinceEpoch}';
+        '${item.productCode}_${DateTime.now().millisecondsSinceEpoch}';
 
     return SelectedBillItem(
       productId: id,
-      originalProductId: item.productId,
+      originalProductId: item.productCode,
       productName: item.productName,
       productCode: item.productCode,
       quantity: quantity,
@@ -82,7 +82,7 @@ class SelectedBillItem {
     );
   }
 
-  // Convert to map for JSON serialization
+  // Convert to Map for Firebase/database storage
   Map<String, dynamic> toMap() {
     return {
       'productId': productId,
@@ -98,93 +98,56 @@ class SelectedBillItem {
     };
   }
 
-  // Factory constructor from map
+  // Create from Map (for Firebase/database retrieval)
   factory SelectedBillItem.fromMap(Map<String, dynamic> map) {
     return SelectedBillItem(
       productId: map['productId'] ?? '',
-      originalProductId:
-          map['originalProductId'] ??
-          map['productId'] ??
-          '', // Fallback for backward compatibility
+      originalProductId: map['originalProductId'] ?? map['productId'] ?? '',
       productName: map['productName'] ?? '',
       productCode: map['productCode'] ?? '',
-      quantity: map['quantity'] ?? 0,
-      unitPrice: (map['unitPrice'] ?? 0.0).toDouble(),
-      bagSize: (map['bagSize'] ?? 0.0).toDouble(),
+      quantity: map['quantity']?.toInt() ?? 0,
+      unitPrice: map['unitPrice']?.toDouble() ?? 0.0,
+      bagSize: map['bagSize']?.toDouble() ?? 0.0,
       unit: map['unit'] ?? '',
       category: map['category'] ?? '',
-      totalPrice: (map['totalPrice'] ?? 0.0).toDouble(),
+      totalPrice: map['totalPrice']?.toDouble() ?? 0.0,
     );
   }
 
-  // Convert to BillItem for database/API
-  Map<String, dynamic> toBillItem() {
-    return {
-      'productId': originalProductId, // Use original product ID for database
-      'productName': productName,
-      'productCode': productCode,
-      'quantity': quantity,
-      'unitPrice': unitPrice,
-      'totalPrice': totalPrice,
-      'bagSize': bagSize,
-      'unit': unit,
-    };
-  }
+  // Convert to JSON
+  Map<String, dynamic> toJson() => toMap();
 
-  // Display helpers
-  String get quantityDisplay => '$quantity ${unit}';
-  String get priceDisplay => 'Rs.${unitPrice.toStringAsFixed(2)}/kg';
-  String get totalDisplay => 'Rs.${totalPrice.toStringAsFixed(2)}';
+  // Create from JSON
+  factory SelectedBillItem.fromJson(Map<String, dynamic> json) =>
+      SelectedBillItem.fromMap(json);
 
-  // Calculate total weight
+  // Calculate weight for this item
   double get totalWeight => quantity * bagSize;
-  String get weightDisplay => '${totalWeight.toStringAsFixed(1)}kg';
 
-  // Price validation helpers
-  bool isPriceValid(double minPrice, double maxPrice) {
-    return unitPrice >= minPrice && unitPrice <= maxPrice;
-  }
+  // Display formatted total price
+  String get formattedTotalPrice => 'Rs.${totalPrice.toStringAsFixed(2)}';
 
-  String getPriceStatus(double minPrice, double maxPrice) {
-    if (unitPrice < minPrice) return 'Below minimum price';
-    if (unitPrice > maxPrice) return 'Above maximum price';
-    if (unitPrice == minPrice) return 'Minimum price';
-    if (unitPrice == maxPrice) return 'Maximum price';
-    return 'Custom price';
-  }
+  // Display formatted unit price
+  String get formattedUnitPrice => 'Rs.${unitPrice.toStringAsFixed(2)}/kg';
 
-  // Check if using default/suggested price
-  bool isUsingPrice(double checkPrice) {
-    return (unitPrice - checkPrice).abs() <
-        0.01; // Account for floating point precision
-  }
+  // Display quantity with unit
+  String get quantityWithUnit => '$quantity × ${bagSize}kg bags';
 
-  // Display name with instance info (for showing multiple items of same product)
-  String get displayNameWithInstance {
-    return '$productName (${quantityDisplay} @ ${priceDisplay})';
-  }
-
-  // Check if this is a duplicate item (same product code but different instance)
-  bool isDuplicateOf(SelectedBillItem other) {
-    return productCode == other.productCode && productId != other.productId;
-  }
+  // Display full item description
+  String get fullDescription =>
+      '$productName ($quantityWithUnit @ $formattedUnitPrice)';
 
   @override
   String toString() {
-    return 'SelectedBillItem(productId: $productId, originalProductId: $originalProductId, productName: $productName, quantity: $quantity, unitPrice: $unitPrice, totalPrice: $totalPrice)';
+    return 'SelectedBillItem(productId: $productId, productName: $productName, quantity: $quantity, unitPrice: $unitPrice, totalPrice: $totalPrice)';
   }
 
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) return true;
-    return other is SelectedBillItem &&
-        other.productId == productId &&
-        other.quantity == quantity &&
-        other.unitPrice == unitPrice;
+    return other is SelectedBillItem && other.productId == productId;
   }
 
   @override
-  int get hashCode {
-    return productId.hashCode ^ quantity.hashCode ^ unitPrice.hashCode;
-  }
+  int get hashCode => productId.hashCode;
 }

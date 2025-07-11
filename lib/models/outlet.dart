@@ -1,4 +1,4 @@
-// lib/models/outlet.dart
+// lib/models/outlet.dart (Complete updated version)
 class Outlet {
   final String id;
   final String outletName;
@@ -82,6 +82,29 @@ class Outlet {
     );
   }
 
+  // ADD THIS METHOD - This is what was missing
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'outletName': outletName,
+      'address': address,
+      'phoneNumber': phoneNumber,
+      'latitude': latitude,
+      'longitude': longitude,
+      'ownerName': ownerName,
+      'outletType': outletType,
+      'imageUrl': imageUrl,
+      'ownerId': ownerId,
+      'businessId': businessId,
+      'createdBy': createdBy,
+      'routeId': routeId,
+      'routeName': routeName,
+      'isActive': isActive,
+      'createdAt': createdAt.toIso8601String(),
+      'updatedAt': updatedAt.toIso8601String(),
+    };
+  }
+
   Map<String, dynamic> toFirestore() {
     return {
       'outletName': outletName,
@@ -125,6 +148,36 @@ class Outlet {
     };
   }
 
+  // Convert to JSON
+  Map<String, dynamic> toJson() => toMap();
+
+  // Create from JSON
+  factory Outlet.fromJson(Map<String, dynamic> json) {
+    return Outlet(
+      id: json['id'] ?? '',
+      outletName: json['outletName'] ?? '',
+      address: json['address'] ?? '',
+      phoneNumber: json['phoneNumber'] ?? '',
+      latitude: (json['latitude'] ?? 0.0).toDouble(),
+      longitude: (json['longitude'] ?? 0.0).toDouble(),
+      ownerName: json['ownerName'] ?? '',
+      outletType: json['outletType'] ?? '',
+      imageUrl: json['imageUrl'],
+      ownerId: json['ownerId'] ?? '',
+      businessId: json['businessId'] ?? '',
+      createdBy: json['createdBy'] ?? '',
+      routeId: json['routeId'] ?? '',
+      routeName: json['routeName'],
+      isActive: json['isActive'] ?? true,
+      createdAt: DateTime.parse(
+        json['createdAt'] ?? DateTime.now().toIso8601String(),
+      ),
+      updatedAt: DateTime.parse(
+        json['updatedAt'] ?? DateTime.now().toIso8601String(),
+      ),
+    );
+  }
+
   bool belongsToRoute(String checkRouteId) {
     return routeId == checkRouteId;
   }
@@ -154,4 +207,58 @@ class Outlet {
       updatedAt: DateTime.now(),
     );
   }
+
+  Outlet copyWith({
+    String? id,
+    String? outletName,
+    String? address,
+    String? phoneNumber,
+    double? latitude,
+    double? longitude,
+    String? ownerName,
+    String? outletType,
+    String? imageUrl,
+    String? ownerId,
+    String? businessId,
+    String? createdBy,
+    String? routeId,
+    String? routeName,
+    bool? isActive,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) {
+    return Outlet(
+      id: id ?? this.id,
+      outletName: outletName ?? this.outletName,
+      address: address ?? this.address,
+      phoneNumber: phoneNumber ?? this.phoneNumber,
+      latitude: latitude ?? this.latitude,
+      longitude: longitude ?? this.longitude,
+      ownerName: ownerName ?? this.ownerName,
+      outletType: outletType ?? this.outletType,
+      imageUrl: imageUrl ?? this.imageUrl,
+      ownerId: ownerId ?? this.ownerId,
+      businessId: businessId ?? this.businessId,
+      createdBy: createdBy ?? this.createdBy,
+      routeId: routeId ?? this.routeId,
+      routeName: routeName ?? this.routeName,
+      isActive: isActive ?? this.isActive,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return 'Outlet(id: $id, outletName: $outletName, address: $address)';
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is Outlet && other.id == id;
+  }
+
+  @override
+  int get hashCode => id.hashCode;
 }
