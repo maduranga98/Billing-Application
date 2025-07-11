@@ -410,6 +410,71 @@ class BillingService {
     }
   }
 
+  // Get bill items for a specific bill
+  static Future<List<BillItem>> getBillItems(
+    String billId,
+    UserSession session,
+  ) async {
+    try {
+      final connectivity = await Connectivity().checkConnectivity();
+      final isOnline =
+          connectivity.isNotEmpty &&
+          connectivity.first != ConnectivityResult.none;
+
+      if (isOnline) {
+        return await _getBillItemsFromFirebase(billId, session);
+      } else {
+        return await _getBillItemsFromLocal(billId, session);
+      }
+    } catch (e) {
+      print('Error getting bill items: $e');
+      return [];
+    }
+  }
+
+  // Get bill items from Firebase
+  static Future<List<BillItem>> _getBillItemsFromFirebase(
+    String billId,
+    UserSession session,
+  ) async {
+    try {
+      final querySnapshot =
+          await _firestore
+              .collection('owners')
+              .doc(session.ownerId)
+              .collection('businesses')
+              .doc(session.businessId)
+              .collection('bills')
+              .doc(billId)
+              .collection('items')
+              .get();
+
+      return querySnapshot.docs.map((doc) {
+        final data = doc.data();
+        return BillItem.fromFirestore(data);
+      }).toList();
+    } catch (e) {
+      print('Error getting bill items from Firebase: $e');
+      return [];
+    }
+  }
+
+  // Get bill items from local database
+  static Future<List<BillItem>> _getBillItemsFromLocal(
+    String billId,
+    UserSession session,
+  ) async {
+    try {
+      final billItemsData = await _dbService.getBillItems(billId);
+      return billItemsData
+          .map((itemData) => BillItem.fromSQLite(itemData))
+          .toList();
+    } catch (e) {
+      print('Error getting bill items from local database: $e');
+      return [];
+    }
+  }
+
   // Update bill payment status - SIMPLIFIED since updateBillPaymentStatus doesn't exist in DatabaseService
   static Future<void> updatePaymentStatus(
     UserSession session,

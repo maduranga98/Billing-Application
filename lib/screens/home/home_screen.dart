@@ -190,7 +190,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       backgroundColor: Colors.grey.shade50,
       appBar: AppBar(
         elevation: 0,
-        backgroundColor: Colors.deepPurple.shade600,
+        backgroundColor: Colors.deepPurple.shade800,
         foregroundColor: Colors.white,
         title: const Text(
           'LumoraBiz',
@@ -529,30 +529,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               onTap: () => Navigator.pushNamed(context, '/loading'),
             ),
             _buildActionButton(
-              title: 'Daily Summary',
+              title: 'Day Summary',
               subtitle: 'Bill summary',
               icon: Icons.assessment,
               color: Colors.purple,
-              onTap: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Daily Summary feature coming soon'),
-                  ),
-                );
-              },
+              onTap:
+                  () => Navigator.pushNamed(context, '/reports/daily-summary'),
             ),
             _buildActionButton(
               title: 'View Bills',
               subtitle: 'Created bills',
               icon: Icons.list_alt,
               color: Colors.indigo,
-              onTap: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('View Bills feature coming soon'),
-                  ),
-                );
-              },
+              onTap: () => Navigator.pushNamed(context, '/billing/view-bills'),
             ),
             _buildActionButton(
               title: 'Outlets',
