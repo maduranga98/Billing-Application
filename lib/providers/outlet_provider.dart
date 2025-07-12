@@ -56,7 +56,10 @@ class OutletProvider with ChangeNotifier {
         refreshOutlets();
       }
 
-      notifyListeners();
+      // Only notify if not currently loading to avoid conflicts
+      if (!_isLoading) {
+        notifyListeners();
+      }
     });
   }
 
@@ -67,10 +70,10 @@ class OutletProvider with ChangeNotifier {
 
   // Load all outlets
   Future<void> loadOutlets(UserSession userSession) async {
-    _setLoading(true);
-    _clearError();
-
     try {
+      _setLoading(true);
+      _clearError();
+
       _outlets = await OutletService.getAllOutlets(userSession);
       _offlineOutletCount = await OutletService.getOfflineOutletCount();
       _applyFilters();
@@ -131,7 +134,7 @@ class OutletProvider with ChangeNotifier {
     }
   }
 
-  // Sync offline outlets
+  // Sync offline outlets - Fixed to use the SyncResult from OutletService
   Future<SyncResult?> syncOfflineOutlets(UserSession userSession) async {
     if (!_isConnected) {
       _setError('Cannot sync while offline');
@@ -187,14 +190,15 @@ class OutletProvider with ChangeNotifier {
           return matchesSearch && matchesType;
         }).toList();
 
-    // Sort: online outlets first, then by creation date
+    // Sort: offline outlets first (for sync priority), then by creation date
     _filteredOutlets.sort((a, b) {
-      // Prioritize online outlets (those with proper Firestore IDs)
-      final aIsOnline = a.id.length > 15; // Firestore IDs are longer
-      final bIsOnline = b.id.length > 15;
+      // Check if outlets are offline (shorter ID or starts with 'offline_')
+      final aIsOffline = a.id.length <= 15 || a.id.startsWith('offline_');
+      final bIsOffline = b.id.length <= 15 || b.id.startsWith('offline_');
 
-      if (aIsOnline && !bIsOnline) return -1;
-      if (!aIsOnline && bIsOnline) return 1;
+      // Prioritize offline outlets for visibility
+      if (aIsOffline && !bIsOffline) return -1;
+      if (!aIsOffline && bIsOffline) return 1;
 
       // Then sort by creation date (newest first)
       return b.createdAt.compareTo(a.createdAt);
@@ -258,10 +262,19 @@ class OutletProvider with ChangeNotifier {
 
   // Get outlets statistics
   Map<String, dynamic> getOutletStats() {
+    final onlineOutlets =
+        _outlets
+            .where((o) => o.id.length > 15 && !o.id.startsWith('offline_'))
+            .length;
+    final offlineOutlets =
+        _outlets
+            .where((o) => o.id.length <= 15 || o.id.startsWith('offline_'))
+            .length;
+
     final stats = <String, dynamic>{
       'total': _outlets.length,
-      'online': _outlets.where((o) => o.id.length > 15).length,
-      'offline': _offlineOutletCount,
+      'online': onlineOutlets,
+      'offline': offlineOutlets,
       'byType': <String, int>{},
     };
 
@@ -276,8 +289,10 @@ class OutletProvider with ChangeNotifier {
 
   // Private helper methods
   void _setLoading(bool loading) {
-    _isLoading = loading;
-    notifyListeners();
+    if (_isLoading != loading) {
+      _isLoading = loading;
+      notifyListeners();
+    }
   }
 
   void _setError(String error) {
@@ -286,8 +301,10 @@ class OutletProvider with ChangeNotifier {
   }
 
   void _clearError() {
-    _errorMessage = null;
-    notifyListeners();
+    if (_errorMessage != null) {
+      _errorMessage = null;
+      notifyListeners();
+    }
   }
 
   // Dispose method
@@ -296,3 +313,5 @@ class OutletProvider with ChangeNotifier {
     super.dispose();
   }
 }
+
+// Note: SyncResult is now imported from OutletService, no need to define it here

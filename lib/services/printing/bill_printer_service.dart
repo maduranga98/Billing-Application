@@ -403,14 +403,6 @@ class BillPrinterService {
 
     bytes += _generator!.feed(2);
 
-    // === THANK YOU MESSAGE (Above dotted line) ===
-    bytes += _generator!.text(
-      centerWithMargin('Thank you for your business!'),
-      styles: const PosStyles(bold: true),
-    );
-
-    bytes += _generator!.feed(2);
-
     // === SIGNATURE SECTION (Above dotted line) ===
     String signatureLine = '${'_' * 30}    ${'_' * 30}';
     bytes += _generator!.text(addMargin(signatureLine));
@@ -432,9 +424,6 @@ class BillPrinterService {
     );
 
     bytes += _generator!.text(centerWithMargin('Mobile: +94 76 620 6555'));
-
-    // Bottom spacing and cut
-    bytes += _generator!.feed(2);
     bytes += _generator!.cut();
 
     return bytes;

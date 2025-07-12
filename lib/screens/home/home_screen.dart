@@ -1,11 +1,12 @@
-// lib/screens/home/home_screen.dart (Corrected UI and Routes)
 import 'package:flutter/material.dart';
+import 'package:lumorabiz_billing/addOutlet.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'dart:async';
 import '../../providers/auth_provider.dart';
 import '../../providers/loading_provider.dart';
+import '../../services/unloading/unloading_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -20,6 +21,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   late Timer _timer;
   DateTime _currentDateTime = DateTime.now();
   bool _isConnected = false;
+  bool _isUploading = false;
+  Map<String, dynamic>? _pendingUploadData;
 
   @override
   void initState() {
@@ -36,6 +39,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _checkConnectivity();
     _startTimer();
     _loadTodaysData();
+    _checkPendingUploadData(); // ADDED
   }
 
   void _startTimer() {
@@ -78,6 +82,23 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         loadingProvider.loadTodaysLoading(authProvider.currentSession!);
       }
     });
+  }
+
+  // ADDED: Check for pending upload data
+  void _checkPendingUploadData() async {
+    final authProvider = context.read<AuthProvider>();
+    if (authProvider.currentSession != null) {
+      try {
+        final pendingData = await UnloadingService.getPendingUploadData(
+          authProvider.currentSession!,
+        );
+        setState(() {
+          _pendingUploadData = pendingData;
+        });
+      } catch (e) {
+        print('Error checking pending upload data: $e');
+      }
+    }
   }
 
   @override
@@ -162,10 +183,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final authProvider = context.read<AuthProvider>();
     if (authProvider.currentSession != null) {
       loadingProvider.refreshLoading(authProvider.currentSession!);
+      // Refresh pending upload data after getting new data
+      _checkPendingUploadData();
     }
   }
 
-  void _uploadData() {
+  // UPDATED: Enhanced upload data method
+  void _uploadData() async {
     if (!_isConnected) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -176,12 +200,90 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       return;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Uploading data to server...'),
-        backgroundColor: Colors.green,
-      ),
-    );
+    final authProvider = context.read<AuthProvider>();
+    if (authProvider.currentSession == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No user session found. Please login again.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // Check if there's data to upload
+    if (_pendingUploadData != null && !_pendingUploadData!['hasPendingData']) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No pending data to upload.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isUploading = true);
+
+    try {
+      // Show uploading message
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Uploading data to server...'),
+          backgroundColor: Colors.blue,
+          duration: Duration(seconds: 2),
+        ),
+      );
+
+      // Upload data using UnloadingService
+      final result = await UnloadingService.uploadDayData(
+        session: authProvider.currentSession!,
+      );
+
+      if (mounted) {
+        if (result['success']) {
+          // Show success message with details
+          final uploadedBills = result['uploadedBills'] as int;
+          final totalValue = result['details']['totalValue'] as double;
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Upload successful! $uploadedBills bills uploaded (Rs.${totalValue.toStringAsFixed(2)})',
+              ),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+
+          // Refresh pending data
+          _checkPendingUploadData();
+        } else {
+          // Show error message
+          final errors = result['errors'] as List<String>;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Upload failed: ${errors.join(', ')}'),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Upload error: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isUploading = false);
+      }
+    }
   }
 
   @override
@@ -224,6 +326,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
           if (authProvider.currentSession != null) {
             await loadingProvider.refreshLoading(authProvider.currentSession!);
+            _checkPendingUploadData(); // ADDED: Refresh upload data too
           }
         },
         child: SingleChildScrollView(
@@ -237,6 +340,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 // Date and Route Info (Simple Text)
                 _buildInfoSection(),
                 const SizedBox(height: 24),
+
+                // ADDED: Pending Upload Alert (if any)
+                _buildPendingUploadAlert(),
 
                 // Today's Prices Section
                 _buildTodaysPricesSection(),
@@ -253,6 +359,79 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  // ADDED: Pending upload alert widget
+  Widget _buildPendingUploadAlert() {
+    if (_pendingUploadData == null || !_pendingUploadData!['hasPendingData']) {
+      return const SizedBox.shrink();
+    }
+
+    final billsCount = _pendingUploadData!['pendingBillsCount'] as int;
+    final totalValue = _pendingUploadData!['totalPendingValue'] as double;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.orange[50],
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.orange[200]!),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.upload_outlined, color: Colors.orange[700], size: 20),
+              const SizedBox(width: 8),
+              Text(
+                'Pending Upload',
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  color: Colors.orange[700],
+                  fontSize: 16,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '$billsCount bills worth Rs.${totalValue.toStringAsFixed(2)} are ready to upload.',
+            style: TextStyle(color: Colors.orange[700]),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _isConnected && !_isUploading ? _uploadData : null,
+              icon:
+                  _isUploading
+                      ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Colors.white,
+                          ),
+                        ),
+                      )
+                      : const Icon(Icons.cloud_upload, size: 18),
+              label: Text(_isUploading ? 'Uploading...' : 'Upload Now'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange[600],
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -279,7 +458,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               children: [
                 Expanded(
                   child: Text(
-                    'Today Route: ${loadingProvider.hasRouteContext ? loadingProvider.routeDisplayName : "No route assigned"}',
+                    'Today Route: ${loadingProvider.hasRouteContext ? loadingProvider.currentRouteName : "No route assigned"}',
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
@@ -461,12 +640,24 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             const SizedBox(width: 12),
             Expanded(
               child: ElevatedButton.icon(
-                onPressed: _isConnected ? _uploadData : null,
-                icon: const Icon(Icons.upload, size: 18),
-                label: const Text('Upload Data'),
+                onPressed: _isConnected && !_isUploading ? _uploadData : null,
+                icon:
+                    _isUploading
+                        ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Colors.white,
+                            ),
+                          ),
+                        )
+                        : const Icon(Icons.upload, size: 18),
+                label: Text(_isUploading ? 'Uploading...' : 'Upload Data'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor:
-                      _isConnected
+                      _isConnected && !_isUploading
                           ? Colors.green.shade600
                           : Colors.grey.shade400,
                   foregroundColor: Colors.white,
@@ -497,60 +688,81 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         ),
         const SizedBox(height: 12),
 
-        GridView.count(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: 2,
-          mainAxisSpacing: 12,
-          crossAxisSpacing: 12,
-          childAspectRatio: 1.4,
-          children: [
-            _buildActionButton(
-              title: 'Create Bill',
-              subtitle: 'New billing',
-              icon: Icons.receipt_long,
-              color: Colors.blue,
-              onTap:
-                  () =>
-                      Navigator.pushNamed(context, '/billing/outlet-selection'),
-            ),
-            _buildActionButton(
-              title: 'Add Customer',
-              subtitle: 'New outlet',
-              icon: Icons.store_outlined,
-              color: Colors.green,
-              onTap: () => Navigator.pushNamed(context, '/add-outlet'),
-            ),
-            _buildActionButton(
-              title: 'Stock',
-              subtitle: 'Current stock',
-              icon: Icons.inventory,
-              color: Colors.orange,
-              onTap: () => Navigator.pushNamed(context, '/loading'),
-            ),
-            _buildActionButton(
-              title: 'Day Summary',
-              subtitle: 'Bill summary',
-              icon: Icons.assessment,
-              color: Colors.purple,
-              onTap:
-                  () => Navigator.pushNamed(context, '/reports/daily-summary'),
-            ),
-            _buildActionButton(
-              title: 'View Bills',
-              subtitle: 'Created bills',
-              icon: Icons.list_alt,
-              color: Colors.indigo,
-              onTap: () => Navigator.pushNamed(context, '/billing/view-bills'),
-            ),
-            _buildActionButton(
-              title: 'Outlets',
-              subtitle: 'Manage outlets',
-              icon: Icons.business,
-              color: Colors.teal,
-              onTap: () => Navigator.pushNamed(context, '/outlets'),
-            ),
-          ],
+        Consumer<LoadingProvider>(
+          builder: (context, loadingProvider, child) {
+            return GridView.count(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisCount: 2,
+              mainAxisSpacing: 12,
+              crossAxisSpacing: 12,
+              childAspectRatio: 1.4,
+              children: [
+                _buildActionButton(
+                  title: 'Create Bill',
+                  subtitle: 'New billing',
+                  icon: Icons.receipt_long,
+                  color: Colors.blue,
+                  onTap:
+                      () => Navigator.pushNamed(
+                        context,
+                        '/billing/outlet-selection',
+                      ),
+                ),
+                _buildActionButton(
+                  title: 'Add Customer',
+                  subtitle: 'New outlet',
+                  icon: Icons.store_outlined,
+                  color: Colors.green,
+                  onTap:
+                      () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder:
+                              (context) => AddOutlet(
+                                routeName:
+                                    loadingProvider.currentRouteName ?? '',
+                                routeId: loadingProvider.currentRouteId ?? '',
+                              ),
+                        ),
+                      ),
+                ),
+                _buildActionButton(
+                  title: 'Stock',
+                  subtitle: 'Current stock',
+                  icon: Icons.inventory,
+                  color: Colors.orange,
+                  onTap: () => Navigator.pushNamed(context, '/loading'),
+                ),
+                _buildActionButton(
+                  title: 'Day Summary',
+                  subtitle: 'Bill summary',
+                  icon: Icons.assessment,
+                  color: Colors.purple,
+                  onTap:
+                      () => Navigator.pushNamed(
+                        context,
+                        '/reports/daily-summary',
+                      ),
+                ),
+                _buildActionButton(
+                  title: 'View Bills',
+                  subtitle: 'Created bills',
+                  icon: Icons.list_alt,
+                  color: Colors.indigo,
+                  onTap:
+                      () => Navigator.pushNamed(context, '/billing/view-bills'),
+                ),
+                _buildActionButton(
+                  title: 'Outlets',
+                  subtitle: 'Manage outlets',
+                  icon: Icons.business,
+                  color: Colors.teal,
+                  onTap: () => Navigator.pushNamed(context, '/outlets'),
+                ),
+              ],
+            );
+          },
         ),
       ],
     );

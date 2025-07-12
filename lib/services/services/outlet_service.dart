@@ -1,26 +1,25 @@
-// lib/services/outlet_service.dart
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
-import 'package:lumorabiz_billing/models/outlet.dart';
-import 'package:lumorabiz_billing/models/user_session.dart';
-import 'package:lumorabiz_billing/services/local/database_service.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:connectivity_plus/connectivity_plus.dart';
+// Add these methods to your lib/services/services/outlet_service.dart file
+
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:lumorabiz_billing/models/outlet.dart';
+import 'package:lumorabiz_billing/models/user_session.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 
 class OutletService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   static final FirebaseStorage _storage = FirebaseStorage.instance;
 
-  // Add outlet to Firebase
+  // Add outlet online
   static Future<String> addOutletOnline({
     required Outlet outlet,
     required UserSession userSession,
     String? imageBase64,
   }) async {
     try {
-      // Create document reference
+      // Create document reference in customers collection
       final docRef =
           _firestore
               .collection('owners')
@@ -30,24 +29,29 @@ class OutletService {
               .collection('customers')
               .doc();
 
+      // Prepare outlet data
+      final outletData = outlet.toFirestore();
+      outletData.addAll({
+        'id': docRef.id,
+        'ownerId': userSession.ownerId,
+        'businessId': userSession.businessId,
+        'createdBy': userSession.employeeId,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+        'isActive': true,
+      });
+
       // Upload image if provided
-      String? imageUrl;
-      if (imageBase64 != null) {
-        imageUrl = await _uploadImageToStorage(
+      if (imageBase64 != null && imageBase64.isNotEmpty) {
+        final imageUrl = await _uploadImageToStorage(
           outletId: docRef.id,
           imageBase64: imageBase64,
           userSession: userSession,
         );
+        outletData['imageUrl'] = imageUrl;
       }
 
-      // Prepare outlet data
-      final outletData = outlet.toFirestore();
-      outletData['id'] = docRef.id;
-      outletData['imageUrl'] = imageUrl;
-      outletData['createdAt'] = FieldValue.serverTimestamp();
-      outletData['updatedAt'] = FieldValue.serverTimestamp();
-
-      // Save to Firestore
+      // Save to Firestore customers collection
       await docRef.set(outletData);
 
       return docRef.id;
@@ -56,30 +60,23 @@ class OutletService {
     }
   }
 
-  // Save outlet offline
+  // Add outlet offline
   static Future<String> addOutletOffline({
     required Map<String, dynamic> outletData,
   }) async {
     try {
-      // Generate unique ID
-      final String outletId = DateTime.now().millisecondsSinceEpoch.toString();
-      outletData['id'] = outletId;
-      outletData['syncStatus'] = 'pending';
-
-      // Save to SharedPreferences
       final prefs = await SharedPreferences.getInstance();
       List<String> offlineOutlets =
           prefs.getStringList('offline_outlets') ?? [];
+
+      // Generate offline ID
+      final outletId = 'offline_${DateTime.now().millisecondsSinceEpoch}';
+      outletData['id'] = outletId;
+      outletData['isActive'] = true;
+
+      // Add to offline storage
       offlineOutlets.add(jsonEncode(outletData));
       await prefs.setStringList('offline_outlets', offlineOutlets);
-
-      // Also save to local database if available
-      try {
-        final dbService = DatabaseService();
-        await dbService.insertOutlet(outletData);
-      } catch (e) {
-        print('Warning: Could not save to local database: $e');
-      }
 
       return outletId;
     } catch (e) {
@@ -87,72 +84,61 @@ class OutletService {
     }
   }
 
-  // Get all outlets (online and offline combined)
+  // Get all outlets (online + offline)
   static Future<List<Outlet>> getAllOutlets(UserSession userSession) async {
-    final List<Outlet> allOutlets = [];
-
     try {
-      // Check connectivity
-      final connectivityResult = await Connectivity().checkConnectivity();
-      final isOnline = !connectivityResult.contains(ConnectivityResult.none);
+      final List<Outlet> allOutlets = [];
 
-      if (isOnline) {
-        // Fetch from Firebase
-        final onlineOutlets = await getOnlineOutlets(userSession);
-        allOutlets.addAll(onlineOutlets);
+      // Get online outlets from customers collection
+      try {
+        final querySnapshot =
+            await _firestore
+                .collection('owners')
+                .doc(userSession.ownerId)
+                .collection('businesses')
+                .doc(userSession.businessId)
+                .collection('customers')
+                .where('isActive', isEqualTo: true)
+                .orderBy('createdAt', descending: true)
+                .get();
+
+        for (final doc in querySnapshot.docs) {
+          try {
+            final outlet = Outlet.fromFirestore(doc.data(), doc.id);
+            allOutlets.add(outlet);
+          } catch (e) {
+            print('Error parsing outlet ${doc.id}: $e');
+          }
+        }
+      } catch (e) {
+        print('Error loading online outlets: $e');
       }
 
-      // Always fetch offline outlets
-      final offlineOutlets = await getOfflineOutlets();
-      allOutlets.addAll(offlineOutlets);
+      // Get offline outlets
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final offlineOutlets = prefs.getStringList('offline_outlets') ?? [];
+
+        for (final outletJson in offlineOutlets) {
+          try {
+            final data = jsonDecode(outletJson) as Map<String, dynamic>;
+            final outlet = _convertOfflineDataToOutlet(data);
+            allOutlets.add(outlet);
+          } catch (e) {
+            print('Error parsing offline outlet: $e');
+          }
+        }
+      } catch (e) {
+        print('Error loading offline outlets: $e');
+      }
 
       return allOutlets;
     } catch (e) {
-      print('Error getting all outlets: $e');
-      // Fallback to offline only
-      return await getOfflineOutlets();
+      throw Exception('Failed to load outlets: $e');
     }
   }
 
-  // Get online outlets from Firebase
-  static Future<List<Outlet>> getOnlineOutlets(UserSession userSession) async {
-    try {
-      final querySnapshot =
-          await _firestore
-              .collection('owners')
-              .doc(userSession.ownerId)
-              .collection('businesses')
-              .doc(userSession.businessId)
-              .collection('customers')
-              .where('isActive', isEqualTo: true)
-              .orderBy('createdAt', descending: true)
-              .get();
-
-      return querySnapshot.docs
-          .map((doc) => Outlet.fromFirestore(doc.data(), doc.id))
-          .toList();
-    } catch (e) {
-      throw Exception('Failed to fetch online outlets: $e');
-    }
-  }
-
-  // Get offline outlets
-  static Future<List<Outlet>> getOfflineOutlets() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final offlineOutlets = prefs.getStringList('offline_outlets') ?? [];
-
-      return offlineOutlets.map((outletJson) {
-        final data = jsonDecode(outletJson) as Map<String, dynamic>;
-        return _convertOfflineDataToOutlet(data);
-      }).toList();
-    } catch (e) {
-      print('Error getting offline outlets: $e');
-      return [];
-    }
-  }
-
-  // Sync offline outlets to Firebase
+  // Sync offline outlets
   static Future<SyncResult> syncOfflineOutlets(UserSession userSession) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -164,13 +150,13 @@ class OutletService {
 
       int syncedCount = 0;
       int failedCount = 0;
-      List<String> remainingOutlets = [];
+      final List<String> remainingOutlets = [];
 
-      for (String outletJson in offlineOutlets) {
+      for (final outletJson in offlineOutlets) {
         try {
           final data = jsonDecode(outletJson) as Map<String, dynamic>;
 
-          // Create new document reference
+          // Create new document reference in customers collection
           final docRef =
               _firestore
                   .collection('owners')
@@ -180,38 +166,27 @@ class OutletService {
                   .collection('customers')
                   .doc();
 
+          // Prepare data for Firestore
+          final firestoreData = Map<String, dynamic>.from(data);
+          firestoreData['id'] = docRef.id;
+          firestoreData.remove('imageBase64'); // Remove base64 before saving
+
           // Upload image if exists
-          String? imageUrl;
-          if (data['imageBase64'] != null) {
-            imageUrl = await _uploadImageToStorage(
+          if (data['imageBase64'] != null && data['imageBase64'].isNotEmpty) {
+            final imageUrl = await _uploadImageToStorage(
               outletId: docRef.id,
               imageBase64: data['imageBase64'],
               userSession: userSession,
             );
+            firestoreData['imageUrl'] = imageUrl;
           }
 
-          // Prepare Firestore data
-          final firestoreData = {
-            'id': docRef.id,
-            'outletName': data['outletName'],
-            'address': data['address'],
-            'phoneNumber': data['phoneNumber'],
-            'coordinates': {
-              'latitude': data['latitude'],
-              'longitude': data['longitude'],
-            },
-            'ownerName': data['ownerName'],
-            'outletType': data['outletType'],
-            'imageUrl': imageUrl,
-            'ownerId': userSession.ownerId,
-            'businessId': userSession.businessId,
-            'createdBy': data['createdBy'],
-            'isActive': true,
-            'createdAt': FieldValue.serverTimestamp(),
-            'updatedAt': FieldValue.serverTimestamp(),
-          };
+          // Set timestamps
+          firestoreData['createdAt'] = FieldValue.serverTimestamp();
+          firestoreData['updatedAt'] = FieldValue.serverTimestamp();
+          firestoreData['isActive'] = true;
 
-          // Save to Firestore
+          // Save to Firestore customers collection
           await docRef.set(firestoreData);
           syncedCount++;
         } catch (e) {
@@ -243,7 +218,7 @@ class OutletService {
     try {
       final Uint8List imageBytes = base64Decode(imageBase64);
       final String fileName =
-          'outlet_${outletId}_${DateTime.now().millisecondsSinceEpoch}.jpg';
+          'customer_${outletId}_${DateTime.now().millisecondsSinceEpoch}.jpg';
 
       final Reference storageRef = _storage
           .ref()
@@ -251,7 +226,7 @@ class OutletService {
           .child(userSession.ownerId)
           .child('businesses')
           .child(userSession.businessId)
-          .child('outlets')
+          .child('customers')
           .child(outletId)
           .child('images')
           .child(fileName);
@@ -281,7 +256,7 @@ class OutletService {
       businessId: data['businessId'],
       createdBy: data['createdBy'],
       routeId: data['routeId'] ?? '',
-      routeName: data['routeName'],
+      routeName: data['routeName'] ?? '',
       isActive: true,
       createdAt: DateTime.fromMillisecondsSinceEpoch(data['createdAt']),
       updatedAt: DateTime.fromMillisecondsSinceEpoch(data['createdAt']),
@@ -305,17 +280,32 @@ class OutletService {
     UserSession userSession,
   ) async {
     try {
-      await _firestore
-          .collection('owners')
-          .doc(userSession.ownerId)
-          .collection('businesses')
-          .doc(userSession.businessId)
-          .collection('customers')
-          .doc(outletId)
-          .update({
-            'isActive': false,
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
+      // If it's an offline outlet (shorter ID), remove from local storage
+      if (outletId.length <= 15 || outletId.startsWith('offline_')) {
+        final prefs = await SharedPreferences.getInstance();
+        List<String> offlineOutlets =
+            prefs.getStringList('offline_outlets') ?? [];
+
+        offlineOutlets.removeWhere((outletJson) {
+          final data = jsonDecode(outletJson) as Map<String, dynamic>;
+          return data['id'] == outletId;
+        });
+
+        await prefs.setStringList('offline_outlets', offlineOutlets);
+      } else {
+        // Online outlet - mark as inactive in Firestore customers collection
+        await _firestore
+            .collection('owners')
+            .doc(userSession.ownerId)
+            .collection('businesses')
+            .doc(userSession.businessId)
+            .collection('customers')
+            .doc(outletId)
+            .update({
+              'isActive': false,
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+      }
     } catch (e) {
       throw Exception('Failed to delete outlet: $e');
     }

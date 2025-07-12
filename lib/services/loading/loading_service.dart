@@ -296,13 +296,16 @@ class LoadingService {
     }
   }
 
-  // Update sold quantities after creating a bill (placeholder for future implementation)
+  // UPDATED: Enhanced updateSoldQuantities method with proper product code handling
   static Future<bool> updateSoldQuantities({
     required UserSession session,
     required String loadingId,
     required Map<String, int> itemQuantities, // productCode -> bags sold
   }) async {
     try {
+      print('Updating sold quantities for loading: $loadingId');
+      print('Product codes to update: ${itemQuantities.keys.toList()}');
+
       // Check connectivity
       final connectivity = await Connectivity().checkConnectivity();
       final isOnline =
@@ -310,12 +313,14 @@ class LoadingService {
           connectivity.first != ConnectivityResult.none;
 
       if (isOnline) {
-        // Update in Firebase (future implementation)
+        // Update in Firebase with enhanced error handling
         await _updateFirebaseBagQuantities(session, loadingId, itemQuantities);
+        print('Firebase update completed successfully');
       }
 
       // Always update local database
       await _dbService.updateLoadingSoldQuantities(loadingId, itemQuantities);
+      print('Local database update completed successfully');
 
       return true;
     } catch (e) {
@@ -324,6 +329,7 @@ class LoadingService {
     }
   }
 
+  // ENHANCED: Better Firebase update with product code validation and totals recalculation
   static Future<void> _updateFirebaseBagQuantities(
     UserSession session,
     String loadingId,
@@ -342,33 +348,147 @@ class LoadingService {
       final DocumentSnapshot loadingDoc = await loadingRef.get();
 
       if (!loadingDoc.exists) {
-        throw Exception('Loading document not found');
+        throw Exception('Loading document not found: $loadingId');
       }
 
       final data = loadingDoc.data() as Map<String, dynamic>;
-      final itemsData = data['items'] as List<dynamic>;
+      final itemsData = List<Map<String, dynamic>>.from(data['items'] ?? []);
 
-      // Update bag quantities for each item
+      print('Found ${itemsData.length} items in loading document');
+
+      // Track totals for recalculation
+      int totalBags = 0;
+      double totalValue = 0.0;
+      double totalWeight = 0.0;
+
+      // Update bag quantities for each item by product code
       for (int i = 0; i < itemsData.length; i++) {
         final item = itemsData[i] as Map<String, dynamic>;
         final productCode = item['productCode'] as String;
 
         if (itemQuantities.containsKey(productCode)) {
-          final currentQuantity = item['bagQuantity'] ?? 0;
+          final currentQuantity = (item['bagQuantity'] as num?)?.toInt() ?? 0;
           final bagsSold = itemQuantities[productCode]!;
+
+          print(
+            'Updating $productCode: current=$currentQuantity, sold=$bagsSold',
+          );
+
           // Reduce available quantity
-          item['bagQuantity'] = (currentQuantity - bagsSold).clamp(
+          final newQuantity = (currentQuantity - bagsSold).clamp(
             0,
             currentQuantity,
           );
+          item['bagQuantity'] = newQuantity;
+
+          // Update bagsUsed if exists (proportional reduction)
+          if (item['bagsUsed'] != null && item['bagsUsed'] is List) {
+            final bagsUsed = List<Map<String, dynamic>>.from(item['bagsUsed']);
+            for (var bag in bagsUsed) {
+              final bagQuantity = (bag['quantityTaken'] as num?)?.toInt() ?? 0;
+              if (bagQuantity > 0 && currentQuantity > 0) {
+                final proportion = bagsSold / currentQuantity;
+                final quantityToReduce = (bagQuantity * proportion).round();
+                bag['quantityTaken'] = (bagQuantity - quantityToReduce).clamp(
+                  0,
+                  bagQuantity,
+                );
+              }
+            }
+            item['bagsUsed'] = bagsUsed;
+          }
+
+          print('Updated $productCode: new quantity=$newQuantity');
         }
+
+        // Recalculate totals
+        final itemBags = (item['bagQuantity'] as num?)?.toInt() ?? 0;
+        final itemValue = (item['totalValue'] as num?)?.toDouble() ?? 0.0;
+        final itemWeight = (item['totalWeight'] as num?)?.toDouble() ?? 0.0;
+
+        totalBags += itemBags;
+        totalValue +=
+            itemValue *
+            (itemBags / ((item['bagsCount'] as num?)?.toInt() ?? 1));
+        totalWeight +=
+            itemWeight *
+            (itemBags / ((item['bagsCount'] as num?)?.toInt() ?? 1));
       }
 
-      // Update the document
-      await loadingRef.update({'items': itemsData});
+      // Update the document with new items and recalculated totals
+      final updateData = {
+        'items': itemsData,
+        'totalBags': totalBags,
+        'totalValue': totalValue,
+        'totalWeight': totalWeight,
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+
+      await loadingRef.update(updateData);
+
+      print(
+        'Successfully updated Firebase: totalBags=$totalBags, totalValue=$totalValue',
+      );
     } catch (e) {
       print('Error updating Firebase bag quantities: $e');
       throw e;
+    }
+  }
+
+  // NEW: Update specific item by product code
+  static Future<bool> updateItemByProductCode({
+    required UserSession session,
+    required String loadingId,
+    required String productCode,
+    required Map<String, dynamic> updates,
+  }) async {
+    try {
+      final connectivity = await Connectivity().checkConnectivity();
+      final isOnline =
+          connectivity.isNotEmpty &&
+          connectivity.first != ConnectivityResult.none;
+
+      if (isOnline) {
+        final DocumentReference loadingRef = _firestore
+            .collection('owners')
+            .doc(session.ownerId)
+            .collection('businesses')
+            .doc(session.businessId)
+            .collection('loadings')
+            .doc(loadingId);
+
+        final DocumentSnapshot loadingDoc = await loadingRef.get();
+        if (!loadingDoc.exists) {
+          throw Exception('Loading document not found');
+        }
+
+        final data = loadingDoc.data() as Map<String, dynamic>;
+        final itemsData = List<Map<String, dynamic>>.from(data['items'] ?? []);
+
+        // Find and update the specific item
+        bool itemFound = false;
+        for (int i = 0; i < itemsData.length; i++) {
+          if (itemsData[i]['productCode'] == productCode) {
+            itemsData[i] = {...itemsData[i], ...updates};
+            itemFound = true;
+            break;
+          }
+        }
+
+        if (!itemFound) {
+          throw Exception('Item with product code $productCode not found');
+        }
+
+        await loadingRef.update({
+          'items': itemsData,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      return true;
+    } catch (e) {
+      print('Error updating item by product code: $e');
+      return false;
     }
   }
 
@@ -465,6 +585,25 @@ class LoadingService {
     } catch (e) {
       print('Error getting items by rice type: $e');
       return [];
+    }
+  }
+
+  // NEW: Get item by product code
+  static Future<LoadingItem?> getItemByProductCode({
+    required UserSession session,
+    required String productCode,
+  }) async {
+    try {
+      final loading = await getTodaysLoading(session);
+      if (loading == null) return null;
+
+      return loading.items.firstWhere(
+        (item) => item.productCode == productCode,
+        orElse: () => _createEmptyLoadingItem(),
+      );
+    } catch (e) {
+      print('Error getting item by product code: $e');
+      return null;
     }
   }
 }
