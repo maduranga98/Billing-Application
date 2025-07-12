@@ -261,7 +261,7 @@
 //             child: Column(
 //               children: [
 //                 Text(
-//                   'LUMORA BIZ',
+//                   'Sajith Rice Mill',
 //                   style: const TextStyle(
 //                     fontSize: 20,
 //                     fontWeight: FontWeight.bold,
@@ -269,13 +269,13 @@
 //                 ),
 //                 const SizedBox(height: 4),
 //                 Text(
-//                   '123, Business Street',
+//                   'Sajith Rice Mill,Nadalagamuwa,Wadumunnegedara',
 //                   style: const TextStyle(fontSize: 12),
 //                   textAlign: TextAlign.center,
 //                 ),
 //                 const SizedBox(height: 2),
 //                 Text(
-//                   'Tel: +94 11 234 5678',
+//                   'Tel: (077) 92-58293',
 //                   style: const TextStyle(fontSize: 12),
 //                 ),
 //               ],

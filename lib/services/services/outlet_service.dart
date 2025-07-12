@@ -27,7 +27,7 @@ class OutletService {
               .doc(userSession.ownerId)
               .collection('businesses')
               .doc(userSession.businessId)
-              .collection('outlets')
+              .collection('customers')
               .doc();
 
       // Upload image if provided
@@ -123,7 +123,7 @@ class OutletService {
               .doc(userSession.ownerId)
               .collection('businesses')
               .doc(userSession.businessId)
-              .collection('outlets')
+              .collection('customers')
               .where('isActive', isEqualTo: true)
               .orderBy('createdAt', descending: true)
               .get();
@@ -177,7 +177,7 @@ class OutletService {
                   .doc(userSession.ownerId)
                   .collection('businesses')
                   .doc(userSession.businessId)
-                  .collection('outlets')
+                  .collection('customers')
                   .doc();
 
           // Upload image if exists
@@ -310,7 +310,7 @@ class OutletService {
           .doc(userSession.ownerId)
           .collection('businesses')
           .doc(userSession.businessId)
-          .collection('outlets')
+          .collection('customers')
           .doc(outletId)
           .update({
             'isActive': false,
@@ -335,7 +335,7 @@ class OutletService {
           .doc(userSession.ownerId)
           .collection('businesses')
           .doc(userSession.businessId)
-          .collection('outlets')
+          .collection('customers')
           .doc(outletId)
           .update(updates);
     } catch (e) {

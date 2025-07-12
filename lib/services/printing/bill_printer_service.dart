@@ -252,15 +252,15 @@ class BillPrinterService {
 
     // === HEADER SECTION ===
     bytes += _generator!.text(
-      centerWithMargin('LUMORA BUSINESS'),
+      centerWithMargin('Sajith Rice Mill'),
       styles: const PosStyles(bold: true, height: PosTextSize.size2),
     );
 
     bytes += _generator!.text(
-      centerWithMargin('No. 123, Main Street, Colombo, Sri Lanka'),
+      centerWithMargin('Sajith Rice Mill,Nadalagamuwa,Wadumunnegedara'),
     );
 
-    bytes += _generator!.text(centerWithMargin('Tel: +94 11 123 4567'));
+    bytes += _generator!.text(centerWithMargin('Tel: (077) 92-58293'));
 
     bytes += _generator!.text(addMargin(mainSeparator));
     bytes += _generator!.feed(1);
