@@ -1,4 +1,4 @@
-// lib/services/local/database_service.dart (COMPLETE CLASS)
+// lib/services/local/database_service.dart (CORRECTED VERSION)
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'dart:convert';
@@ -19,7 +19,7 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 3, // Increased version for loading cost support
+      version: 4, // FIXED: Updated to version 4 for upload support
       onCreate: _createDatabase,
       onUpgrade: _upgradeDatabase,
     );
@@ -68,7 +68,7 @@ class DatabaseService {
       )
     ''');
 
-    // Bills table (UPDATED with loading cost support)
+    // Bills table (UPDATED with loading cost support AND sync_status)
     await db.execute('''
       CREATE TABLE bills (
         id TEXT PRIMARY KEY,
@@ -138,6 +138,35 @@ class DatabaseService {
       )
     ''');
 
+    // ADDED: Unloading summaries table
+    await db.execute('''
+      CREATE TABLE unloading_summaries (
+        id TEXT PRIMARY KEY,
+        loading_id TEXT NOT NULL,
+        business_id TEXT NOT NULL,
+        owner_id TEXT NOT NULL,
+        sales_rep_id TEXT NOT NULL,
+        sales_rep_name TEXT NOT NULL,
+        route_id TEXT,
+        route_name TEXT,
+        unloading_date INTEGER NOT NULL,
+        total_bill_count INTEGER DEFAULT 0,
+        total_sales_value REAL DEFAULT 0.0,
+        total_cash_sales REAL DEFAULT 0.0,
+        total_credit_sales REAL DEFAULT 0.0,
+        total_cheque_sales REAL DEFAULT 0.0,
+        total_items_loaded INTEGER DEFAULT 0,
+        total_value_loaded REAL DEFAULT 0.0,
+        items_sold_json TEXT,
+        remaining_stock_json TEXT,
+        created_at INTEGER NOT NULL,
+        created_by TEXT NOT NULL,
+        notes TEXT,
+        status TEXT DEFAULT 'pending',
+        sync_status TEXT DEFAULT 'pending'
+      )
+    ''');
+
     // Sync queue table
     await db.execute('''
       CREATE TABLE sync_queue (
@@ -172,6 +201,9 @@ class DatabaseService {
     );
     await db.execute(
       'CREATE INDEX idx_sync_queue_status ON sync_queue(table_name, operation)',
+    );
+    await db.execute(
+      'CREATE INDEX idx_unloading_summaries_rep ON unloading_summaries(sales_rep_id, unloading_date)',
     );
   }
 
@@ -214,7 +246,7 @@ class DatabaseService {
       );
     }
 
-    // NEW: Add loading cost support to bills table (version 3)
+    // Add loading cost support to bills table (version 3)
     if (oldVersion < 3) {
       try {
         // Add new columns to bills table
@@ -241,6 +273,54 @@ class DatabaseService {
           'Error adding loading cost columns (they might already exist): $e',
         );
       }
+    }
+
+    // FIXED: Add upload support (version 4)
+    if (oldVersion < 4) {
+      try {
+        // Add sync_status column to bills table if not exists
+        await db.execute(
+          'ALTER TABLE bills ADD COLUMN sync_status TEXT DEFAULT "pending"',
+        );
+        print('Added sync_status column to bills table');
+      } catch (e) {
+        print('sync_status column might already exist: $e');
+      }
+
+      // Create unloading_summaries table
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS unloading_summaries (
+          id TEXT PRIMARY KEY,
+          loading_id TEXT NOT NULL,
+          business_id TEXT NOT NULL,
+          owner_id TEXT NOT NULL,
+          sales_rep_id TEXT NOT NULL,
+          sales_rep_name TEXT NOT NULL,
+          route_id TEXT,
+          route_name TEXT,
+          unloading_date INTEGER NOT NULL,
+          total_bill_count INTEGER DEFAULT 0,
+          total_sales_value REAL DEFAULT 0.0,
+          total_cash_sales REAL DEFAULT 0.0,
+          total_credit_sales REAL DEFAULT 0.0,
+          total_cheque_sales REAL DEFAULT 0.0,
+          total_items_loaded INTEGER DEFAULT 0,
+          total_value_loaded REAL DEFAULT 0.0,
+          items_sold_json TEXT,
+          remaining_stock_json TEXT,
+          created_at INTEGER NOT NULL,
+          created_by TEXT NOT NULL,
+          notes TEXT,
+          status TEXT DEFAULT 'pending',
+          sync_status TEXT DEFAULT 'pending'
+        )
+      ''');
+
+      await db.execute(
+        'CREATE INDEX idx_unloading_summaries_rep ON unloading_summaries(sales_rep_id, unloading_date)',
+      );
+
+      print('Created unloading_summaries table');
     }
   }
 
@@ -273,9 +353,10 @@ class DatabaseService {
     return Loading.fromSQLite(maps.first);
   }
 
+  // FIXED: Updated to use productCode instead of productId
   Future<void> updateLoadingSoldQuantities(
     String loadingId,
-    Map<String, int> itemQuantities,
+    Map<String, int> itemQuantities, // productCode -> quantity sold
   ) async {
     final db = await database;
 
@@ -293,15 +374,20 @@ class DatabaseService {
     final itemsJson = loadingData['items'] as String;
     final itemsList = jsonDecode(itemsJson) as List<dynamic>;
 
-    // Update sold quantities
+    // Update quantities by productCode
     for (int i = 0; i < itemsList.length; i++) {
       final item = itemsList[i] as Map<String, dynamic>;
-      final productId = item['productId'] as String;
+      final productCode = item['productCode'] as String; // Use productCode
 
-      if (itemQuantities.containsKey(productId)) {
-        final currentSold = item['soldQuantity'] ?? 0;
-        final additionalSold = itemQuantities[productId]!;
-        item['soldQuantity'] = currentSold + additionalSold;
+      if (itemQuantities.containsKey(productCode)) {
+        final currentQuantity = (item['bagQuantity'] as num?)?.toInt() ?? 0;
+        final quantitySold = itemQuantities[productCode]!;
+        // Reduce available quantity
+        final newQuantity = (currentQuantity - quantitySold).clamp(
+          0,
+          currentQuantity,
+        );
+        item['bagQuantity'] = newQuantity;
       }
     }
 
@@ -367,13 +453,120 @@ class DatabaseService {
     );
   }
 
+  // NEW: Get bills for specific date
+  Future<List<Map<String, dynamic>>> getBillsForDate(
+    String ownerId,
+    String businessId,
+    DateTime date,
+  ) async {
+    final db = await database;
+
+    // Calculate date range (start and end of day)
+    final startOfDay = DateTime(date.year, date.month, date.day);
+    final endOfDay = DateTime(date.year, date.month, date.day, 23, 59, 59);
+
+    final List<Map<String, dynamic>> maps = await db.query(
+      'bills',
+      where:
+          'owner_id = ? AND business_id = ? AND created_at >= ? AND created_at <= ?',
+      whereArgs: [
+        ownerId,
+        businessId,
+        startOfDay.millisecondsSinceEpoch,
+        endOfDay.millisecondsSinceEpoch,
+      ],
+      orderBy: 'created_at DESC',
+    );
+
+    return maps;
+  }
+
+  // NEW: Get pending bills (not uploaded)
+  Future<List<Map<String, dynamic>>> getPendingBills(
+    String ownerId,
+    String businessId,
+  ) async {
+    final db = await database;
+
+    final List<Map<String, dynamic>> maps = await db.query(
+      'bills',
+      where:
+          'owner_id = ? AND business_id = ? AND (sync_status = ? OR sync_status IS NULL)',
+      whereArgs: [ownerId, businessId, 'pending'],
+      orderBy: 'created_at DESC',
+    );
+
+    return maps;
+  }
+
+  // NEW: Mark bills as uploaded
+  Future<void> markBillsAsUploaded(
+    String ownerId,
+    String businessId,
+    DateTime date,
+  ) async {
+    final db = await database;
+
+    // Calculate date range
+    final startOfDay = DateTime(date.year, date.month, date.day);
+    final endOfDay = DateTime(date.year, date.month, date.day, 23, 59, 59);
+
+    await db.update(
+      'bills',
+      {'sync_status': 'uploaded'},
+      where:
+          'owner_id = ? AND business_id = ? AND created_at >= ? AND created_at <= ?',
+      whereArgs: [
+        ownerId,
+        businessId,
+        startOfDay.millisecondsSinceEpoch,
+        endOfDay.millisecondsSinceEpoch,
+      ],
+    );
+  }
+
+  // Get bill items by bill ID
   Future<List<Map<String, dynamic>>> getBillItems(String billId) async {
     final db = await database;
-    return await db.query(
+
+    final List<Map<String, dynamic>> maps = await db.query(
       'bill_items',
       where: 'bill_id = ?',
       whereArgs: [billId],
+      orderBy: 'id ASC',
     );
+
+    return maps;
+  }
+
+  // NEW: Save unloading summary
+  Future<void> saveUnloadingSummary(Map<String, dynamic> summaryData) async {
+    final db = await database;
+
+    await db.insert(
+      'unloading_summaries',
+      summaryData,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  // NEW: Get unloading summaries
+  Future<List<Map<String, dynamic>>> getUnloadingSummaries(
+    String ownerId,
+    String businessId,
+    String salesRepId,
+  ) async {
+    final db = await database;
+
+    final List<Map<String, dynamic>> maps = await db.query(
+      'unloading_summaries',
+      where: 'owner_id = ? AND business_id = ? AND sales_rep_id = ?',
+      whereArgs: [ownerId, businessId, salesRepId],
+      orderBy: 'unloading_date DESC',
+      limit: 10,
+    );
+
+    return maps;
   }
 
   // Outlet-related methods

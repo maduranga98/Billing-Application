@@ -30,7 +30,6 @@ import 'screens/auth/login_screen.dart';
 import 'screens/loading/loading_list_screen.dart';
 
 // Legacy imports (update these to new structure when ready)
-import 'addOutlet.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -133,7 +132,6 @@ class LumoraBizApp extends StatelessWidget {
           '/splash': (context) => const SplashScreen(),
 
           // Legacy routes (update these later)
-          '/add-outlet': (context) => const AddOutlet(),
           '/create-bill': (context) => const PrinterSelectionScreen(),
           '/loading': (context) => const LoadingListScreen(),
           '/outlets': (context) => const OutletListScreen(),

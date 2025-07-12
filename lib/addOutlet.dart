@@ -1,13 +1,15 @@
+// lib/screens/outlets/add_outlet_screen.dart
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:provider/provider.dart';
 import 'dart:io';
 import 'dart:convert';
 import 'dart:typed_data';
+
+import '../../models/outlet.dart';
+import '../../providers/auth_provider.dart';
+import '../../providers/outlet_provider.dart';
 
 // Custom Text Input Formatter for capitalizing after spaces
 class CapitalizationTextInputFormatter extends TextInputFormatter {
@@ -38,138 +40,15 @@ class CapitalizationTextInputFormatter extends TextInputFormatter {
   }
 }
 
-// Model class for offline outlet data
-class OfflineOutletData {
-  final String id;
-  final String outletName;
-  final String address;
-  final String phoneNumber;
-  final double latitude;
-  final double longitude;
-  final String ownerName;
-  final String outletType;
-  final String? imageBase64;
-  final String? imagePath;
-  final DateTime createdAt;
-  final String businessId;
-  final String ownerId;
-
-  OfflineOutletData({
-    required this.id,
-    required this.outletName,
-    required this.address,
-    required this.phoneNumber,
-    required this.latitude,
-    required this.longitude,
-    required this.ownerName,
-    required this.outletType,
-    this.imageBase64,
-    this.imagePath,
-    required this.createdAt,
-    required this.businessId,
-    required this.ownerId,
-  });
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'outletName': outletName,
-      'address': address,
-      'phoneNumber': phoneNumber,
-      'latitude': latitude,
-      'longitude': longitude,
-      'ownerName': ownerName,
-      'outletType': outletType,
-      'imageBase64': imageBase64,
-      'imagePath': imagePath,
-      'createdAt': createdAt.millisecondsSinceEpoch,
-      'businessId': businessId,
-      'ownerId': ownerId,
-    };
-  }
-
-  factory OfflineOutletData.fromJson(Map<String, dynamic> json) {
-    return OfflineOutletData(
-      id: json['id'],
-      outletName: json['outletName'],
-      address: json['address'],
-      phoneNumber: json['phoneNumber'],
-      latitude: json['latitude'].toDouble(),
-      longitude: json['longitude'].toDouble(),
-      ownerName: json['ownerName'],
-      outletType: json['outletType'],
-      imageBase64: json['imageBase64'],
-      imagePath: json['imagePath'],
-      createdAt: DateTime.fromMillisecondsSinceEpoch(json['createdAt']),
-      businessId: json['businessId'],
-      ownerId: json['ownerId'],
-    );
-  }
-}
-
-// Offline storage service
-class OfflineStorageService {
-  static const String _offlineOutletsKey = 'offline_outlets';
-
-  static Future<void> saveOfflineOutlet(OfflineOutletData outlet) async {
-    final prefs = await SharedPreferences.getInstance();
-    List<String> offlineOutlets = prefs.getStringList(_offlineOutletsKey) ?? [];
-
-    offlineOutlets.add(jsonEncode(outlet.toJson()));
-    await prefs.setStringList(_offlineOutletsKey, offlineOutlets);
-  }
-
-  static Future<List<OfflineOutletData>> getOfflineOutlets() async {
-    final prefs = await SharedPreferences.getInstance();
-    List<String> offlineOutlets = prefs.getStringList(_offlineOutletsKey) ?? [];
-
-    return offlineOutlets.map((outletJson) {
-      return OfflineOutletData.fromJson(jsonDecode(outletJson));
-    }).toList();
-  }
-
-  static Future<void> removeOfflineOutlet(String outletId) async {
-    final prefs = await SharedPreferences.getInstance();
-    List<String> offlineOutlets = prefs.getStringList(_offlineOutletsKey) ?? [];
-
-    offlineOutlets.removeWhere((outletJson) {
-      final outlet = OfflineOutletData.fromJson(jsonDecode(outletJson));
-      return outlet.id == outletId;
-    });
-
-    await prefs.setStringList(_offlineOutletsKey, offlineOutlets);
-  }
-
-  static Future<void> clearAllOfflineOutlets() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_offlineOutletsKey);
-  }
-
-  static Future<int> getOfflineOutletCount() async {
-    final outlets = await getOfflineOutlets();
-    return outlets.length;
-  }
-}
-
-// Connectivity service
-// Fixed Connectivity service for connectivity_plus 3.0+
-class ConnectivityService {
-  static Future<bool> isConnected() async {
-    final List<ConnectivityResult> connectivityResults =
-        await Connectivity().checkConnectivity();
-    return !connectivityResults.contains(ConnectivityResult.none);
-  }
-
-  static Stream<List<ConnectivityResult>> get onConnectivityChanged =>
-      Connectivity().onConnectivityChanged;
-
-  static bool isConnectionAvailable(List<ConnectivityResult> results) {
-    return !results.contains(ConnectivityResult.none);
-  }
-}
-
 class AddOutlet extends StatefulWidget {
-  const AddOutlet({super.key});
+  final Outlet? outlet; // For editing existing outlet
+  final String routeName, routeId;
+  const AddOutlet({
+    super.key,
+    this.outlet,
+    required this.routeName,
+    required this.routeId,
+  });
 
   @override
   State<AddOutlet> createState() => _AddOutletState();
@@ -178,10 +57,6 @@ class AddOutlet extends StatefulWidget {
 class _AddOutletState extends State<AddOutlet> with TickerProviderStateMixin {
   final _formKey = GlobalKey<FormState>();
   final _scrollController = ScrollController();
-
-  // Firebase instances
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseStorage _storage = FirebaseStorage.instance;
 
   // Form Controllers
   final _outletNameController = TextEditingController();
@@ -194,36 +69,28 @@ class _AddOutletState extends State<AddOutlet> with TickerProviderStateMixin {
   // Form State
   String _selectedOutletType = 'Retail';
   File? _outletImage;
-  bool _isLoading = false;
   bool _isLocationLoading = false;
-  bool _isConnected = true;
-  bool _isUploadingOfflineData = false;
-  double _uploadProgress = 0.0;
-  int _offlineOutletCount = 0;
 
   // Animation Controllers
   late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
-
-  // Firebase paths
-  static const String ownerId = 'UWX4f6ofSxaXDag2CC0aT0t6Ycd2';
-  static const String businessId = 'yVjEcw88CxIinbdL3R2O';
 
   // Outlet Type Options
   final List<String> _outletTypes = [
     'Retail',
     'Wholesale',
     'Hotel',
-    'Customer',
+    'Restaurant',
+    'Supermarket',
+    'Pharmacy',
+    'Other',
   ];
 
   @override
   void initState() {
     super.initState();
     _setupAnimations();
-    _checkConnectivity();
-    _loadOfflineOutletCount();
-    _listenToConnectivityChanges();
+    _initializeForm();
   }
 
   void _setupAnimations() {
@@ -237,35 +104,18 @@ class _AddOutletState extends State<AddOutlet> with TickerProviderStateMixin {
     _fadeController.forward();
   }
 
-  // Replace these methods in your _AddOutletState class:
-
-  Future<void> _checkConnectivity() async {
-    final isConnected = await ConnectivityService.isConnected();
-    setState(() {
-      _isConnected = isConnected;
-    });
-  }
-
-  void _listenToConnectivityChanges() {
-    ConnectivityService.onConnectivityChanged.listen((
-      List<ConnectivityResult> results,
-    ) {
-      final isConnected = ConnectivityService.isConnectionAvailable(results);
-      setState(() {
-        _isConnected = isConnected;
-      });
-
-      if (_isConnected) {
-        _loadOfflineOutletCount();
-      }
-    });
-  }
-
-  Future<void> _loadOfflineOutletCount() async {
-    final count = await OfflineStorageService.getOfflineOutletCount();
-    setState(() {
-      _offlineOutletCount = count;
-    });
+  void _initializeForm() {
+    if (widget.outlet != null) {
+      // Pre-fill form for editing
+      final outlet = widget.outlet!;
+      _outletNameController.text = outlet.outletName;
+      _addressController.text = outlet.address;
+      _phoneController.text = outlet.phoneNumber;
+      _latitudeController.text = outlet.latitude.toString();
+      _longitudeController.text = outlet.longitude.toString();
+      _ownerNameController.text = outlet.ownerName;
+      _selectedOutletType = outlet.outletType;
+    }
   }
 
   @override
@@ -351,50 +201,6 @@ class _AddOutletState extends State<AddOutlet> with TickerProviderStateMixin {
     }
   }
 
-  Future<String?> _uploadImageToStorage(String outletId) async {
-    if (_outletImage == null) return null;
-
-    try {
-      // Create a unique filename with timestamp
-      final String fileName =
-          'outlet_${outletId}_${DateTime.now().millisecondsSinceEpoch}.jpg';
-
-      // Create storage reference
-      final Reference storageRef = _storage
-          .ref()
-          .child('owners')
-          .child(ownerId)
-          .child('businesses')
-          .child(businessId)
-          .child('outlets')
-          .child(outletId)
-          .child('images')
-          .child(fileName);
-
-      // Upload file with progress tracking
-      final UploadTask uploadTask = storageRef.putFile(_outletImage!);
-
-      // Listen to upload progress
-      uploadTask.snapshotEvents.listen((TaskSnapshot snapshot) {
-        setState(() {
-          _uploadProgress = snapshot.bytesTransferred / snapshot.totalBytes;
-        });
-      });
-
-      // Wait for upload completion
-      final TaskSnapshot snapshot = await uploadTask;
-
-      // Get download URL
-      final String downloadUrl = await snapshot.ref.getDownloadURL();
-
-      return downloadUrl;
-    } catch (e) {
-      print('Error uploading image: $e');
-      _showSnackBar('Error uploading image: $e', isError: true);
-      return null;
-    }
-  }
-
   Future<String?> _convertImageToBase64() async {
     if (_outletImage == null) return null;
 
@@ -439,7 +245,7 @@ class _AddOutletState extends State<AddOutlet> with TickerProviderStateMixin {
     );
   }
 
-  Future<void> _saveOutletOffline() async {
+  Future<void> _saveOutlet() async {
     if (!_formKey.currentState!.validate()) {
       _scrollController.animateTo(
         0,
@@ -449,21 +255,26 @@ class _AddOutletState extends State<AddOutlet> with TickerProviderStateMixin {
       return;
     }
 
-    setState(() => _isLoading = true);
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final outletProvider = Provider.of<OutletProvider>(context, listen: false);
+
+    if (authProvider.currentSession == null) {
+      _showSnackBar('No user session found', isError: true);
+      return;
+    }
+
+    final userSession = authProvider.currentSession!;
 
     try {
-      // Generate unique ID
-      final String outletId = DateTime.now().millisecondsSinceEpoch.toString();
-
-      // Convert image to base64 for offline storage
+      // Convert image to base64 for storage
       String? imageBase64;
       if (_outletImage != null) {
         imageBase64 = await _convertImageToBase64();
       }
 
-      // Create offline outlet data
-      final offlineOutlet = OfflineOutletData(
-        id: outletId,
+      // Create outlet object
+      final outlet = Outlet(
+        id: widget.outlet?.id ?? '', // Will be generated by service
         outletName: _outletNameController.text.trim(),
         address: _addressController.text.trim(),
         phoneNumber: _phoneController.text.trim(),
@@ -471,278 +282,97 @@ class _AddOutletState extends State<AddOutlet> with TickerProviderStateMixin {
         longitude: double.tryParse(_longitudeController.text) ?? 0.0,
         ownerName: _ownerNameController.text.trim(),
         outletType: _selectedOutletType,
-        imageBase64: imageBase64,
-        imagePath: _outletImage?.path,
-        createdAt: DateTime.now(),
-        businessId: businessId,
-        ownerId: ownerId,
+        imageUrl: widget.outlet?.imageUrl,
+        ownerId: userSession.ownerId,
+        businessId: userSession.businessId,
+        createdBy: userSession.employeeId,
+        routeId: widget.routeId,
+        routeName: widget.routeName,
+        isActive: true,
+        createdAt: widget.outlet?.createdAt ?? DateTime.now(),
+        updatedAt: DateTime.now(),
       );
 
-      // Save to offline storage
-      await OfflineStorageService.saveOfflineOutlet(offlineOutlet);
+      bool success;
 
-      _showSnackBar(
-        'Outlet saved offline successfully! Will sync when online.',
-      );
+      if (widget.outlet != null) {
+        // Update existing outlet
+        final updates = <String, dynamic>{
+          'outletName': outlet.outletName,
+          'address': outlet.address,
+          'phoneNumber': outlet.phoneNumber,
+          'coordinates': {
+            'latitude': outlet.latitude,
+            'longitude': outlet.longitude,
+          },
+          'ownerName': outlet.ownerName,
+          'outletType': outlet.outletType,
+        };
 
-      // Update offline count
-      await _loadOfflineOutletCount();
-
-      // Clear form
-      _clearForm();
-
-      // Navigate back after a short delay
-      await Future.delayed(const Duration(seconds: 1));
-      if (mounted) {
-        Navigator.pop(context, offlineOutlet.toJson());
-      }
-    } catch (e) {
-      print('Error saving outlet offline: $e');
-      _showSnackBar('Error saving outlet offline: $e', isError: true);
-    } finally {
-      setState(() => _isLoading = false);
-    }
-  }
-
-  Future<void> _saveOutletOnline() async {
-    if (!_formKey.currentState!.validate()) {
-      _scrollController.animateTo(
-        0,
-        duration: const Duration(milliseconds: 500),
-        curve: Curves.easeInOut,
-      );
-      return;
-    }
-
-    setState(() {
-      _isLoading = true;
-      _uploadProgress = 0.0;
-    });
-
-    try {
-      // Generate a unique document ID for the outlet
-      final DocumentReference outletRef =
-          _firestore
-              .collection('owners')
-              .doc(ownerId)
-              .collection('businesses')
-              .doc(businessId)
-              .collection('customers')
-              .doc();
-
-      final String outletId = outletRef.id;
-
-      // Upload image to Firebase Storage (if selected)
-      String? imageUrl;
-      if (_outletImage != null) {
-        _showSnackBar('Uploading image...');
-        imageUrl = await _uploadImageToStorage(outletId);
-        if (imageUrl == null) {
-          throw Exception('Failed to upload image');
+        // Add image if changed
+        if (imageBase64 != null) {
+          updates['imageBase64'] = imageBase64;
         }
-      }
 
-      // Prepare outlet data
-      final DateTime now = DateTime.now();
-      final Map<String, dynamic> outletData = {
-        'id': outletId,
-        'outletName': _outletNameController.text.trim(),
-        'address': _addressController.text.trim(),
-        'phoneNumber': _phoneController.text.trim(),
-        'coordinates': {
-          'latitude': double.tryParse(_latitudeController.text) ?? 0.0,
-          'longitude': double.tryParse(_longitudeController.text) ?? 0.0,
-        },
-        'ownerName': _ownerNameController.text.trim(),
-        'outletType': _selectedOutletType,
-        'imageUrl': imageUrl,
-        'createdAt': Timestamp.fromDate(now),
-        'registeredDate': Timestamp.fromDate(now),
-        'updatedAt': Timestamp.fromDate(now),
-        'isActive': true,
-        'businessId': businessId,
-        'ownerId': ownerId,
-      };
+        success = await outletProvider.updateOutlet(
+          outletId: widget.outlet!.id,
+          updates: updates,
+          userSession: userSession,
+        );
 
-      // Save to Firestore
-      _showSnackBar('Saving outlet data...');
-      await outletRef.set(outletData);
+        if (success) {
+          _showSnackBar('Outlet updated successfully!');
+        }
+      } else {
+        // Add new outlet
+        success = await outletProvider.addOutlet(
+          outlet: outlet,
+          userSession: userSession,
+          imageBase64: imageBase64,
+        );
 
-      // Update business document with outlet count (optional)
-      try {
-        final DocumentReference businessRef = _firestore
-            .collection('owners')
-            .doc(ownerId)
-            .collection('businesses')
-            .doc(businessId);
-
-        await _firestore.runTransaction((transaction) async {
-          final DocumentSnapshot businessDoc = await transaction.get(
-            businessRef,
+        if (success) {
+          _showSnackBar(
+            outletProvider.isConnected
+                ? 'Outlet added successfully!'
+                : 'Outlet saved offline. Will sync when online.',
           );
-
-          if (businessDoc.exists) {
-            final Map<String, dynamic> businessData =
-                businessDoc.data() as Map<String, dynamic>;
-            final int currentOutletCount = businessData['outletCount'] ?? 0;
-
-            transaction.update(businessRef, {
-              'outletCount': currentOutletCount + 1,
-              'updatedAt': Timestamp.fromDate(DateTime.now()),
-            });
-          }
-        });
-      } catch (e) {
-        print('Error updating business outlet count: $e');
-      }
-
-      print('Outlet saved successfully: $outletData');
-      _showSnackBar('Outlet added successfully!');
-
-      // Clear form
-      _clearForm();
-
-      // Navigate back after a short delay
-      await Future.delayed(const Duration(seconds: 1));
-      if (mounted) {
-        Navigator.pop(context, outletData);
-      }
-    } catch (e) {
-      print('Error saving outlet: $e');
-      _showSnackBar('Error saving outlet: $e', isError: true);
-    } finally {
-      setState(() {
-        _isLoading = false;
-        _uploadProgress = 0.0;
-      });
-    }
-  }
-
-  Future<void> _uploadOfflineData() async {
-    setState(() => _isUploadingOfflineData = true);
-
-    try {
-      final offlineOutlets = await OfflineStorageService.getOfflineOutlets();
-
-      if (offlineOutlets.isEmpty) {
-        _showSnackBar('No offline data to upload');
-        return;
-      }
-
-      int successCount = 0;
-      int failCount = 0;
-
-      for (int i = 0; i < offlineOutlets.length; i++) {
-        final outlet = offlineOutlets[i];
-
-        try {
-          // Create Firestore document
-          final DocumentReference outletRef =
-              _firestore
-                  .collection('owners')
-                  .doc(outlet.ownerId)
-                  .collection('businesses')
-                  .doc(outlet.businessId)
-                  .collection('customers')
-                  .doc();
-
-          final String firestoreId = outletRef.id;
-
-          // Upload image if exists
-          String? imageUrl;
-          if (outlet.imageBase64 != null) {
-            try {
-              final Uint8List imageBytes = base64Decode(outlet.imageBase64!);
-
-              final String fileName =
-                  'outlet_${firestoreId}_${DateTime.now().millisecondsSinceEpoch}.jpg';
-
-              final Reference storageRef = _storage
-                  .ref()
-                  .child('owners')
-                  .child(outlet.ownerId)
-                  .child('businesses')
-                  .child(outlet.businessId)
-                  .child('outlets')
-                  .child(firestoreId)
-                  .child('images')
-                  .child(fileName);
-
-              final UploadTask uploadTask = storageRef.putData(imageBytes);
-              final TaskSnapshot snapshot = await uploadTask;
-              imageUrl = await snapshot.ref.getDownloadURL();
-            } catch (e) {
-              print('Error uploading image for outlet ${outlet.id}: $e');
-            }
-          }
-
-          // Prepare outlet data for Firestore
-          final Map<String, dynamic> outletData = {
-            'id': firestoreId,
-            'outletName': outlet.outletName,
-            'address': outlet.address,
-            'phoneNumber': outlet.phoneNumber,
-            'coordinates': {
-              'latitude': outlet.latitude,
-              'longitude': outlet.longitude,
-            },
-            'ownerName': outlet.ownerName,
-            'outletType': outlet.outletType,
-            'imageUrl': imageUrl,
-            'createdAt': Timestamp.fromDate(outlet.createdAt),
-            'registeredDate': Timestamp.fromDate(outlet.createdAt),
-            'updatedAt': Timestamp.fromDate(DateTime.now()),
-            'isActive': true,
-            'businessId': outlet.businessId,
-            'ownerId': outlet.ownerId,
-          };
-
-          // Save to Firestore
-          await outletRef.set(outletData);
-
-          // Remove from offline storage
-          await OfflineStorageService.removeOfflineOutlet(outlet.id);
-
-          successCount++;
-
-          // Update progress
-          setState(() {
-            _uploadProgress = (i + 1) / offlineOutlets.length;
-          });
-        } catch (e) {
-          print('Error uploading outlet ${outlet.id}: $e');
-          failCount++;
         }
       }
 
-      // Update offline count
-      await _loadOfflineOutletCount();
-
-      // Show result
-      if (failCount == 0) {
-        _showSnackBar('All $successCount outlets uploaded successfully!');
+      if (success) {
+        // Clear form and navigate back
+        _clearForm();
+        await Future.delayed(const Duration(seconds: 1));
+        if (mounted) {
+          Navigator.pop(context, true); // Return success
+        }
       } else {
         _showSnackBar(
-          'Uploaded $successCount outlets. $failCount failed.',
-          isError: failCount > successCount,
+          outletProvider.errorMessage ?? 'Failed to save outlet',
+          isError: true,
         );
       }
     } catch (e) {
-      print('Error uploading offline data: $e');
-      _showSnackBar('Error uploading offline data: $e', isError: true);
-    } finally {
-      setState(() {
-        _isUploadingOfflineData = false;
-        _uploadProgress = 0.0;
-      });
+      _showSnackBar('Error saving outlet: $e', isError: true);
     }
   }
 
-  Future<void> _saveOutlet() async {
-    if (_isConnected) {
-      await _saveOutletOnline();
-    } else {
-      await _saveOutletOffline();
+  Future<void> _syncOfflineOutlets() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final outletProvider = Provider.of<OutletProvider>(context, listen: false);
+
+    if (authProvider.currentSession == null) {
+      _showSnackBar('No user session found', isError: true);
+      return;
+    }
+
+    final result = await outletProvider.syncOfflineOutlets(
+      authProvider.currentSession!,
+    );
+
+    if (result != null && mounted) {
+      _showSnackBar(result.message, isError: !result.success);
     }
   }
 
@@ -762,57 +392,80 @@ class _AddOutletState extends State<AddOutlet> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.deepPurple.shade50,
-      appBar: AppBar(
-        elevation: 0,
-        backgroundColor: Colors.deepPurple.shade800,
-        foregroundColor: Colors.white,
-        title: const Text(
-          'Add New Outlet',
-          style: TextStyle(fontWeight: FontWeight.w600, color: Colors.white),
-        ),
+      backgroundColor: Colors.grey[50],
+      appBar: _buildAppBar(),
+      body: FadeTransition(opacity: _fadeAnimation, child: _buildBody()),
+    );
+  }
 
-        actions: [
-          if (_offlineOutletCount > 0 && _isConnected)
-            IconButton(
-              onPressed: _isUploadingOfflineData ? null : _uploadOfflineData,
-              icon: Stack(
-                children: [
-                  const Icon(Icons.cloud_upload),
-                  if (_offlineOutletCount > 0)
-                    Positioned(
-                      right: 0,
-                      top: 0,
-                      child: Container(
-                        padding: const EdgeInsets.all(2),
-                        decoration: BoxDecoration(
-                          color: Colors.orange,
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        constraints: const BoxConstraints(
-                          minWidth: 16,
-                          minHeight: 16,
-                        ),
-                        child: Text(
-                          '$_offlineOutletCount',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
+  PreferredSizeWidget _buildAppBar() {
+    return AppBar(
+      elevation: 0,
+      backgroundColor: Colors.deepPurple.shade800,
+      foregroundColor: Colors.white,
+      title: Text(
+        widget.outlet != null ? 'Edit Outlet' : 'Add New Outlet',
+        style: const TextStyle(
+          fontSize: 20,
+          fontWeight: FontWeight.w600,
+          color: Colors.white,
+        ),
+      ),
+
+      actions: [
+        Consumer<OutletProvider>(
+          builder: (context, outletProvider, child) {
+            if (outletProvider.offlineOutletCount > 0 &&
+                outletProvider.isConnected) {
+              return Container(
+                margin: const EdgeInsets.only(right: 16),
+                child: IconButton(
+                  onPressed: _syncOfflineOutlets,
+                  icon: Stack(
+                    children: [
+                      const Icon(Icons.cloud_upload, color: Colors.blue),
+                      Positioned(
+                        right: 0,
+                        top: 0,
+                        child: Container(
+                          padding: const EdgeInsets.all(2),
+                          decoration: BoxDecoration(
+                            color: Colors.orange,
+                            borderRadius: BorderRadius.circular(10),
                           ),
-                          textAlign: TextAlign.center,
+                          constraints: const BoxConstraints(
+                            minWidth: 16,
+                            minHeight: 16,
+                          ),
+                          child: Text(
+                            '${outletProvider.offlineOutletCount}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
                         ),
                       ),
-                    ),
-                ],
-              ),
-              tooltip: 'Upload $_offlineOutletCount offline outlets',
-            ),
-        ],
-      ),
-      body: FadeTransition(
-        opacity: _fadeAnimation,
-        child: Form(
+                    ],
+                  ),
+                  tooltip:
+                      'Sync ${outletProvider.offlineOutletCount} offline outlets',
+                ),
+              );
+            }
+            return const SizedBox.shrink();
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBody() {
+    return Consumer<OutletProvider>(
+      builder: (context, outletProvider, child) {
+        return Form(
           key: _formKey,
           child: SingleChildScrollView(
             controller: _scrollController,
@@ -821,216 +474,12 @@ class _AddOutletState extends State<AddOutlet> with TickerProviderStateMixin {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // Connection Status
-                if (!_isConnected)
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(16),
-                    margin: const EdgeInsets.only(bottom: 16),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.shade50,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.orange.shade200),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.wifi_off,
-                          color: Colors.orange.shade600,
-                          size: 20,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Offline Mode',
-                                style: TextStyle(
-                                  color: Colors.orange.shade700,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              Text(
-                                'Data will be saved locally and synced when online',
-                                style: TextStyle(
-                                  color: Colors.orange.shade600,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                // Offline data upload progress
-                if (_isUploadingOfflineData)
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(16),
-                    margin: const EdgeInsets.only(bottom: 16),
-                    decoration: BoxDecoration(
-                      color: Colors.blue.shade50,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.blue.shade200),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.sync,
-                              color: Colors.blue.shade600,
-                              size: 20,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              'Syncing offline data... ${(_uploadProgress * 100).toInt()}%',
-                              style: TextStyle(
-                                color: Colors.blue.shade700,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        LinearProgressIndicator(
-                          value: _uploadProgress,
-                          backgroundColor: Colors.blue.shade100,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            Colors.blue.shade600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                if (!outletProvider.isConnected) _buildOfflineIndicator(),
 
                 // Header
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.grey.shade200,
-                        blurRadius: 10,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 50,
-                        height: 50,
-                        decoration: BoxDecoration(
-                          color: Colors.green.shade100,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Icon(
-                          Icons.add_business,
-                          color: Colors.green.shade600,
-                          size: 24,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'New Outlet Registration',
-                              style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            Text(
-                              _isConnected
-                                  ? 'Fill in the details below'
-                                  : 'Data will be saved offline',
-                              style: TextStyle(
-                                fontSize: 14,
-                                color:
-                                    _isConnected
-                                        ? Colors.grey
-                                        : Colors.orange.shade600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (_offlineOutletCount > 0)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.orange.shade100,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            '$_offlineOutletCount pending',
-                            style: TextStyle(
-                              color: Colors.orange.shade700,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
+                _buildHeader(outletProvider),
 
                 const SizedBox(height: 24),
-
-                // Progress indicator for upload
-                if (_isLoading && _uploadProgress > 0)
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(16),
-                    margin: const EdgeInsets.only(bottom: 16),
-                    decoration: BoxDecoration(
-                      color: Colors.blue.shade50,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.blue.shade200),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.cloud_upload,
-                              color: Colors.blue.shade600,
-                              size: 20,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              'Uploading image... ${(_uploadProgress * 100).toInt()}%',
-                              style: TextStyle(
-                                color: Colors.blue.shade700,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        LinearProgressIndicator(
-                          value: _uploadProgress,
-                          backgroundColor: Colors.blue.shade100,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            Colors.blue.shade600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
 
                 // Basic Information Section
                 _buildSectionTitle('Basic Information'),
@@ -1085,418 +534,554 @@ class _AddOutletState extends State<AddOutlet> with TickerProviderStateMixin {
                 const SizedBox(height: 24),
 
                 // Location Section
-                _buildSectionTitle('Location Coordinates'),
-                const SizedBox(height: 16),
-
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildTextField(
-                        controller: _latitudeController,
-                        label: 'Latitude',
-                        hint: 'e.g., 6.0535',
-                        icon: Icons.my_location,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        validator: (value) {
-                          if (value?.isEmpty ?? true) {
-                            return 'Latitude is required';
-                          }
-                          if (double.tryParse(value!) == null) {
-                            return 'Enter valid latitude';
-                          }
-                          return null;
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: _buildTextField(
-                        controller: _longitudeController,
-                        label: 'Longitude',
-                        hint: 'e.g., 80.5550',
-                        icon: Icons.explore,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        validator: (value) {
-                          if (value?.isEmpty ?? true) {
-                            return 'Longitude is required';
-                          }
-                          if (double.tryParse(value!) == null) {
-                            return 'Enter valid longitude';
-                          }
-                          return null;
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 16),
-
-                // Get Current Location Button
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: _isLocationLoading ? null : _getCurrentLocation,
-                    icon:
-                        _isLocationLoading
-                            ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                            : const Icon(Icons.gps_fixed),
-                    label: Text(
-                      _isLocationLoading
-                          ? 'Getting Location...'
-                          : 'Get Current Location',
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.all(16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      side: BorderSide(color: Colors.green.shade600),
-                      foregroundColor: Colors.green.shade600,
-                    ),
-                  ),
-                ),
+                _buildLocationSection(),
 
                 const SizedBox(height: 24),
 
                 // Owner Information Section
-                _buildSectionTitle('Owner Information'),
-                const SizedBox(height: 16),
-
-                // Owner Name Field with Custom Capitalization
-                TextFormField(
-                  controller: _ownerNameController,
-                  textCapitalization: TextCapitalization.none,
-                  inputFormatters: [CapitalizationTextInputFormatter()],
-                  decoration: InputDecoration(
-                    labelText: 'Owner Name',
-                    hintText: 'Enter owner\'s full name',
-                    prefixIcon: Icon(Icons.person, color: Colors.grey.shade600),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: Colors.grey.shade300),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: Colors.grey.shade300),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(
-                        color: Colors.green.shade600,
-                        width: 2,
-                      ),
-                    ),
-                    errorBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(
-                        color: Colors.red.shade400,
-                        width: 2,
-                      ),
-                    ),
-                    filled: true,
-                    fillColor: Colors.white,
-                    contentPadding: const EdgeInsets.all(16),
-                  ),
-                  validator: (value) {
-                    if (value?.isEmpty ?? true) return 'Owner name is required';
-                    return null;
-                  },
-                ),
+                _buildOwnerSection(),
 
                 const SizedBox(height: 24),
 
                 // Outlet Type Section
-                _buildSectionTitle('Outlet Type'),
-                const SizedBox(height: 16),
-
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.grey.shade300),
-                  ),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<String>(
-                      value: _selectedOutletType,
-                      icon: Icon(
-                        Icons.arrow_drop_down,
-                        color: Colors.grey.shade600,
-                      ),
-                      iconSize: 24,
-                      elevation: 16,
-                      style: TextStyle(
-                        color: Colors.grey.shade800,
-                        fontSize: 16,
-                      ),
-                      onChanged: (String? newValue) {
-                        setState(() {
-                          _selectedOutletType = newValue!;
-                        });
-                      },
-                      items:
-                          _outletTypes.map<DropdownMenuItem<String>>((
-                            String value,
-                          ) {
-                            IconData icon;
-                            Color color;
-                            switch (value) {
-                              case 'Retail':
-                                icon = Icons.shopping_bag;
-                                color = Colors.blue;
-                                break;
-                              case 'Wholesale':
-                                icon = Icons.warehouse;
-                                color = Colors.orange;
-                                break;
-                              case 'Hotel':
-                                icon = Icons.hotel;
-                                color = Colors.purple;
-                                break;
-                              case 'Customer':
-                                icon = Icons.person;
-                                color = Colors.green;
-                                break;
-                              default:
-                                icon = Icons.store;
-                                color = Colors.grey;
-                            }
-
-                            return DropdownMenuItem<String>(
-                              value: value,
-                              child: Row(
-                                children: [
-                                  Icon(icon, color: color, size: 20),
-                                  const SizedBox(width: 12),
-                                  Text(value),
-                                ],
-                              ),
-                            );
-                          }).toList(),
-                    ),
-                  ),
-                ),
+                _buildOutletTypeSection(),
 
                 const SizedBox(height: 24),
 
                 // Image Section
-                _buildSectionTitle('Outlet Image'),
-                const SizedBox(height: 16),
-
-                GestureDetector(
-                  onTap: _pickImage,
-                  child: Container(
-                    width: double.infinity,
-                    height: 200,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color:
-                            _outletImage != null
-                                ? Colors.green.shade600
-                                : Colors.grey.shade300,
-                        width: 2,
-                        style: BorderStyle.solid,
-                      ),
-                    ),
-                    child:
-                        _outletImage != null
-                            ? Stack(
-                              children: [
-                                ClipRRect(
-                                  borderRadius: BorderRadius.circular(10),
-                                  child: Image.file(
-                                    _outletImage!,
-                                    width: double.infinity,
-                                    height: double.infinity,
-                                    fit: BoxFit.cover,
-                                  ),
-                                ),
-                                Positioned(
-                                  top: 8,
-                                  right: 8,
-                                  child: GestureDetector(
-                                    onTap:
-                                        () =>
-                                            setState(() => _outletImage = null),
-                                    child: Container(
-                                      padding: const EdgeInsets.all(4),
-                                      decoration: BoxDecoration(
-                                        color: Colors.red.shade600,
-                                        borderRadius: BorderRadius.circular(20),
-                                      ),
-                                      child: const Icon(
-                                        Icons.close,
-                                        color: Colors.white,
-                                        size: 16,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            )
-                            : Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.add_a_photo,
-                                  size: 48,
-                                  color: Colors.grey.shade400,
-                                ),
-                                const SizedBox(height: 12),
-                                Text(
-                                  'Tap to add outlet image',
-                                  style: TextStyle(
-                                    color: Colors.grey.shade600,
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Camera or Gallery',
-                                  style: TextStyle(
-                                    color: Colors.grey.shade500,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ],
-                            ),
-                  ),
-                ),
+                _buildImageSection(),
 
                 const SizedBox(height: 32),
 
                 // Save Button
-                SizedBox(
-                  width: double.infinity,
-                  height: 54,
-                  child: ElevatedButton(
-                    onPressed:
-                        _isLoading || _isUploadingOfflineData
-                            ? null
-                            : _saveOutlet,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor:
-                          _isConnected
-                              ? Colors.green.shade600
-                              : Colors.orange.shade600,
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      disabledBackgroundColor: Colors.grey.shade300,
-                    ),
-                    child:
-                        _isLoading
-                            ? const Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                      Colors.white,
-                                    ),
-                                  ),
-                                ),
-                                SizedBox(width: 12),
-                                Text('Saving...'),
-                              ],
-                            )
-                            : Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  _isConnected ? Icons.save : Icons.save_alt,
-                                  size: 20,
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  _isConnected ? 'Save Outlet' : 'Save Offline',
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ],
-                            ),
-                  ),
-                ),
+                _buildSaveButton(outletProvider),
 
-                // Upload offline data button
-                if (_offlineOutletCount > 0 && _isConnected) ...[
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 54,
-                    child: OutlinedButton(
-                      onPressed:
-                          _isUploadingOfflineData ? null : _uploadOfflineData,
-                      style: OutlinedButton.styleFrom(
-                        side: BorderSide(color: Colors.blue.shade600),
-                        foregroundColor: Colors.blue.shade600,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child:
-                          _isUploadingOfflineData
-                              ? const Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  ),
-                                  SizedBox(width: 12),
-                                  Text('Syncing...'),
-                                ],
-                              )
-                              : Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  const Icon(Icons.cloud_upload, size: 20),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    'Upload $_offlineOutletCount Offline Outlets',
-                                    style: const TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                    ),
-                  ),
-                ],
+                // Sync Button
+                if (outletProvider.offlineOutletCount > 0 &&
+                    outletProvider.isConnected)
+                  _buildSyncButton(outletProvider),
 
                 const SizedBox(height: 20),
               ],
             ),
           ),
-        ),
+        );
+      },
+    );
+  }
+
+  Widget _buildOfflineIndicator() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: Colors.orange.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.orange.shade200),
       ),
+      child: Row(
+        children: [
+          Icon(Icons.wifi_off, color: Colors.orange.shade600, size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Offline Mode',
+                  style: TextStyle(
+                    color: Colors.orange.shade700,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  'Data will be saved locally and synced when online',
+                  style: TextStyle(color: Colors.orange.shade600, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeader(OutletProvider outletProvider) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            spreadRadius: 1,
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 50,
+            height: 50,
+            decoration: BoxDecoration(
+              color: Colors.deepPurple.shade100,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              widget.outlet != null ? Icons.edit : Icons.add_business,
+              color: Colors.deepPurple.shade600,
+              size: 24,
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.outlet != null
+                      ? 'Edit Outlet'
+                      : 'New Outlet Registration',
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  outletProvider.isConnected
+                      ? 'Fill in the details below'
+                      : 'Data will be saved offline',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color:
+                        outletProvider.isConnected
+                            ? Colors.grey
+                            : Colors.orange.shade600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (outletProvider.offlineOutletCount > 0)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade100,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                '${outletProvider.offlineOutletCount} pending',
+                style: TextStyle(
+                  color: Colors.orange.shade700,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLocationSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionTitle('Location Coordinates'),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(
+              child: _buildTextField(
+                controller: _latitudeController,
+                label: 'Latitude',
+                hint: 'e.g., 6.0535',
+                icon: Icons.my_location,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                validator: (value) {
+                  if (value?.isEmpty ?? true) {
+                    return 'Latitude is required';
+                  }
+                  if (double.tryParse(value!) == null) {
+                    return 'Enter valid latitude';
+                  }
+                  return null;
+                },
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: _buildTextField(
+                controller: _longitudeController,
+                label: 'Longitude',
+                hint: 'e.g., 80.5550',
+                icon: Icons.explore,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                validator: (value) {
+                  if (value?.isEmpty ?? true) {
+                    return 'Longitude is required';
+                  }
+                  if (double.tryParse(value!) == null) {
+                    return 'Enter valid longitude';
+                  }
+                  return null;
+                },
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: _isLocationLoading ? null : _getCurrentLocation,
+            icon:
+                _isLocationLoading
+                    ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                    : const Icon(Icons.gps_fixed),
+            label: Text(
+              _isLocationLoading
+                  ? 'Getting Location...'
+                  : 'Get Current Location',
+            ),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.all(16),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              side: BorderSide(color: Colors.deepPurple.shade600),
+              foregroundColor: Colors.deepPurple.shade600,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildOwnerSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionTitle('Owner Information'),
+        const SizedBox(height: 16),
+        TextFormField(
+          controller: _ownerNameController,
+          textCapitalization: TextCapitalization.none,
+          inputFormatters: [CapitalizationTextInputFormatter()],
+          decoration: InputDecoration(
+            labelText: 'Owner Name',
+            hintText: 'Enter owner\'s full name',
+            prefixIcon: Icon(Icons.person, color: Colors.grey.shade600),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey.shade300),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey.shade300),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(
+                color: Colors.deepPurple.shade600,
+                width: 2,
+              ),
+            ),
+            errorBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.red.shade400, width: 2),
+            ),
+            filled: true,
+            fillColor: Colors.white,
+            contentPadding: const EdgeInsets.all(16),
+          ),
+          validator: (value) {
+            if (value?.isEmpty ?? true) return 'Owner name is required';
+            return null;
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildOutletTypeSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionTitle('Outlet Type'),
+        const SizedBox(height: 16),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.grey.shade300),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: _selectedOutletType,
+              icon: Icon(Icons.arrow_drop_down, color: Colors.grey.shade600),
+              iconSize: 24,
+              elevation: 16,
+              style: TextStyle(color: Colors.grey.shade800, fontSize: 16),
+              onChanged: (String? newValue) {
+                setState(() {
+                  _selectedOutletType = newValue!;
+                });
+              },
+              items:
+                  _outletTypes.map<DropdownMenuItem<String>>((String value) {
+                    IconData icon;
+                    Color color;
+                    switch (value) {
+                      case 'Retail':
+                        icon = Icons.shopping_bag;
+                        color = Colors.blue;
+                        break;
+                      case 'Wholesale':
+                        icon = Icons.warehouse;
+                        color = Colors.orange;
+                        break;
+                      case 'Hotel':
+                        icon = Icons.hotel;
+                        color = Colors.purple;
+                        break;
+                      case 'Restaurant':
+                        icon = Icons.restaurant;
+                        color = Colors.red;
+                        break;
+                      case 'Supermarket':
+                        icon = Icons.local_grocery_store;
+                        color = Colors.green;
+                        break;
+                      case 'Pharmacy':
+                        icon = Icons.local_pharmacy;
+                        color = Colors.teal;
+                        break;
+                      default:
+                        icon = Icons.store;
+                        color = Colors.grey;
+                    }
+
+                    return DropdownMenuItem<String>(
+                      value: value,
+                      child: Row(
+                        children: [
+                          Icon(icon, color: color, size: 20),
+                          const SizedBox(width: 12),
+                          Text(value),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildImageSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionTitle('Outlet Image'),
+        const SizedBox(height: 16),
+        GestureDetector(
+          onTap: _pickImage,
+          child: Container(
+            width: double.infinity,
+            height: 200,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color:
+                    _outletImage != null
+                        ? Colors.deepPurple.shade600
+                        : Colors.grey.shade300,
+                width: 2,
+                style: BorderStyle.solid,
+              ),
+            ),
+            child:
+                _outletImage != null
+                    ? Stack(
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: Image.file(
+                            _outletImage!,
+                            width: double.infinity,
+                            height: double.infinity,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                        Positioned(
+                          top: 8,
+                          right: 8,
+                          child: GestureDetector(
+                            onTap: () => setState(() => _outletImage = null),
+                            child: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: Colors.red.shade600,
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: const Icon(
+                                Icons.close,
+                                color: Colors.white,
+                                size: 16,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    )
+                    : Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.add_a_photo,
+                          size: 48,
+                          color: Colors.grey.shade400,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Tap to add outlet image',
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Camera or Gallery',
+                          style: TextStyle(
+                            color: Colors.grey.shade500,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSaveButton(OutletProvider outletProvider) {
+    return SizedBox(
+      width: double.infinity,
+      height: 54,
+      child: ElevatedButton(
+        onPressed: outletProvider.isLoading ? null : _saveOutlet,
+        style: ElevatedButton.styleFrom(
+          backgroundColor:
+              outletProvider.isConnected
+                  ? Colors.deepPurple.shade600
+                  : Colors.orange.shade600,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          disabledBackgroundColor: Colors.grey.shade300,
+        ),
+        child:
+            outletProvider.isLoading
+                ? const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    ),
+                    SizedBox(width: 12),
+                    Text('Saving...'),
+                  ],
+                )
+                : Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      widget.outlet != null
+                          ? Icons.update
+                          : (outletProvider.isConnected
+                              ? Icons.save
+                              : Icons.save_alt),
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      widget.outlet != null
+                          ? 'Update Outlet'
+                          : (outletProvider.isConnected
+                              ? 'Save Outlet'
+                              : 'Save Offline'),
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+      ),
+    );
+  }
+
+  Widget _buildSyncButton(OutletProvider outletProvider) {
+    return Column(
+      children: [
+        const SizedBox(height: 16),
+        SizedBox(
+          width: double.infinity,
+          height: 54,
+          child: OutlinedButton(
+            onPressed: outletProvider.isLoading ? null : _syncOfflineOutlets,
+            style: OutlinedButton.styleFrom(
+              side: BorderSide(color: Colors.blue.shade600),
+              foregroundColor: Colors.blue.shade600,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.cloud_upload, size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  'Sync ${outletProvider.offlineOutletCount} Offline Outlets',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -1541,7 +1126,7 @@ class _AddOutletState extends State<AddOutlet> with TickerProviderStateMixin {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.green.shade600, width: 2),
+          borderSide: BorderSide(color: Colors.deepPurple.shade600, width: 2),
         ),
         errorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
