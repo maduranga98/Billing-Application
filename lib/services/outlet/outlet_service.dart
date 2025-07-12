@@ -44,7 +44,7 @@ class OutletService {
               .doc(session.ownerId)
               .collection('businesses')
               .doc(session.businessId)
-              .collection('outlets')
+              .collection('customers')
               .where('isActive', isEqualTo: true)
               .orderBy('outletName')
               .get();
@@ -112,7 +112,7 @@ class OutletService {
                 .doc(session.ownerId)
                 .collection('businesses')
                 .doc(session.businessId)
-                .collection('outlets')
+                .collection('customers')
                 .doc(outletId)
                 .get();
 
@@ -177,7 +177,7 @@ class OutletService {
             .doc(session.ownerId)
             .collection('businesses')
             .doc(session.businessId)
-            .collection('outlets')
+            .collection('customers')
             .doc();
 
     final data = {
@@ -240,7 +240,7 @@ class OutletService {
             .doc(session.ownerId)
             .collection('businesses')
             .doc(session.businessId)
-            .collection('outlets')
+            .collection('customers')
             .doc(outletId)
             .update({...updates, 'updatedAt': FieldValue.serverTimestamp()});
       } else {
@@ -280,7 +280,7 @@ class OutletService {
             .doc(session.ownerId)
             .collection('businesses')
             .doc(session.businessId)
-            .collection('outlets')
+            .collection('customers')
             .doc(outletId)
             .update({
               'isActive': false,

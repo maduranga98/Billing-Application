@@ -935,7 +935,7 @@ class _AddOutletScreenState extends State<AddOutletScreen>
               .doc(userSession.ownerId)
               .collection('businesses')
               .doc(userSession.businessId)
-              .collection('outlets')
+              .collection('customers')
               .doc();
 
       // Upload image if selected
