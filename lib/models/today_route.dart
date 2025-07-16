@@ -1,5 +1,4 @@
 // lib/models/today_route.dart (Updated with new parser)
-import 'package:cloud_firestore/cloud_firestore.dart';
 import '../utils/timestamp_parser.dart';
 
 class TodayRoute {
@@ -75,7 +74,7 @@ class TodayRoute {
 
   // Get full route display text
   String get fullDisplayText {
-    return '$name (${areasDisplayText})';
+    return '$name ($areasDisplayText)';
   }
 
   @override

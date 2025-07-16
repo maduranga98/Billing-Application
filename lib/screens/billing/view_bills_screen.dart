@@ -4,8 +4,12 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/billing/billing_service.dart';
+import '../../services/printing/bill_printer_service.dart';
 import '../../models/bill.dart';
 import '../../models/bill_item.dart';
+import '../../models/print_bill.dart';
+import '../../screens/printing/printer_selection_screen.dart';
+import '../../screens/printing/print_preview_screen.dart';
 
 class ViewBillsScreen extends StatefulWidget {
   const ViewBillsScreen({super.key});
@@ -196,6 +200,18 @@ class _ViewBillsScreenState extends State<ViewBillsScreen> {
             onPressed: _loadBills,
             icon: const Icon(Icons.refresh),
             tooltip: 'Refresh',
+          ),
+          IconButton(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const PrinterSelectionScreen(),
+                ),
+              );
+            },
+            icon: const Icon(Icons.print),
+            tooltip: 'Printer Settings',
           ),
         ],
       ),
@@ -716,7 +732,7 @@ class _ViewBillsScreenState extends State<ViewBillsScreen> {
   }
 }
 
-// Bill Details Screen
+// Enhanced Bill Details Screen with Printing
 class BillDetailsScreen extends StatefulWidget {
   final Bill bill;
 
@@ -729,6 +745,7 @@ class BillDetailsScreen extends StatefulWidget {
 class _BillDetailsScreenState extends State<BillDetailsScreen> {
   List<BillItem> _billItems = [];
   bool _isLoading = false;
+  bool _isPrinting = false;
 
   @override
   void initState() {
@@ -771,6 +788,178 @@ class _BillDetailsScreenState extends State<BillDetailsScreen> {
     }
   }
 
+  Future<void> _printBill() async {
+    if (_billItems.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please wait for bill items to load'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    // Check if printer is connected
+    if (!BillPrinterService.isConnected) {
+      _showPrinterConnectionDialog();
+      return;
+    }
+
+    setState(() {
+      _isPrinting = true;
+    });
+
+    try {
+      final authProvider = context.read<AuthProvider>();
+      final session = authProvider.currentSession;
+
+      // Convert bill items to print items
+      final printItems =
+          _billItems.asMap().entries.map((entry) {
+            final index = entry.key;
+            final item = entry.value;
+            return PrintBillItem(
+              itemNumber: index + 1,
+              itemName: item.productName,
+              itemCode: item.productCode,
+              quantity: item.quantity,
+              unit: 'bags', // Default unit
+              unitPrice: item.unitPrice,
+              totalPrice: item.totalPrice,
+            );
+          }).toList();
+
+      // Create print bill
+      final printBill = PrintBill(
+        billNumber: widget.bill.billNumber,
+        billDate: widget.bill.createdAt,
+        outletName: widget.bill.outletName,
+        outletAddress: widget.bill.outletAddress,
+        outletPhone: widget.bill.outletPhone,
+        customerName:
+            widget.bill.outletName.isNotEmpty
+                ? widget.bill.outletName
+                : 'Walk-in Customer',
+        salesRepName: session?.name ?? 'Sales Rep',
+        salesRepPhone: session?.phone ?? '',
+        paymentType: widget.bill.paymentType,
+        items: printItems,
+        subtotalAmount: widget.bill.subtotalAmount,
+        loadingCost: widget.bill.loadingCost,
+        totalAmount: widget.bill.totalAmount,
+        discountAmount: widget.bill.discountAmount,
+        taxAmount: widget.bill.taxAmount,
+      );
+
+      final success = await BillPrinterService.printBill(printBill);
+
+      if (success) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Bill printed successfully!'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to print bill. Please try again.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Printing error: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isPrinting = false;
+        });
+      }
+    }
+  }
+
+  void _showPrinterConnectionDialog() {
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            title: Row(
+              children: [
+                Icon(Icons.print_disabled, color: Colors.orange.shade600),
+                const SizedBox(width: 12),
+                const Text('Printer Not Connected'),
+              ],
+            ),
+            content: const Text(
+              'Please connect to a thermal printer first to print the bill.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const PrinterSelectionScreen(),
+                    ),
+                  );
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue.shade600,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Connect Printer'),
+              ),
+            ],
+          ),
+    );
+  }
+
+  void _showPrintPreview() {
+    if (_billItems.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please wait for bill items to load'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    final authProvider = context.read<AuthProvider>();
+    final session = authProvider.currentSession;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder:
+            (context) => PrintPreviewScreen(
+              bill: widget.bill,
+              billItems: _billItems,
+              outletName: widget.bill.outletName,
+              outletAddress: widget.bill.outletAddress,
+              outletPhone: widget.bill.outletPhone,
+              salesRepName: session?.name ?? 'Sales Rep',
+              salesRepPhone: session?.phone ?? '',
+            ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -784,17 +973,40 @@ class _BillDetailsScreenState extends State<BillDetailsScreen> {
           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
         ),
         actions: [
+          // Print Preview Button
+          IconButton(
+            onPressed: _showPrintPreview,
+            icon: const Icon(Icons.preview),
+            tooltip: 'Print Preview',
+          ),
+          // Direct Print Button
+          IconButton(
+            onPressed: _isPrinting ? null : _printBill,
+            icon:
+                _isPrinting
+                    ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    )
+                    : const Icon(Icons.print),
+            tooltip: 'Print Bill',
+          ),
+          // Printer Settings
           IconButton(
             onPressed: () {
-              // TODO: Implement print functionality
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Print functionality coming soon'),
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const PrinterSelectionScreen(),
                 ),
               );
             },
-            icon: const Icon(Icons.print),
-            tooltip: 'Print Bill',
+            icon: const Icon(Icons.settings),
+            tooltip: 'Printer Settings',
           ),
         ],
       ),
@@ -813,9 +1025,12 @@ class _BillDetailsScreenState extends State<BillDetailsScreen> {
                     _buildItemsList(),
                     const SizedBox(height: 16),
                     _buildAmountBreakdown(),
+                    const SizedBox(height: 16),
+                    _buildPrintingSection(),
                   ],
                 ),
               ),
+      floatingActionButton: _buildFloatingPrintButton(),
     );
   }
 
@@ -1214,6 +1429,145 @@ class _BillDetailsScreenState extends State<BillDetailsScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildPrintingSection() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.all(16),
+            child: Text(
+              'Printing Options',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                Icon(
+                  BillPrinterService.isConnected
+                      ? Icons.print
+                      : Icons.print_disabled,
+                  color:
+                      BillPrinterService.isConnected
+                          ? Colors.green.shade600
+                          : Colors.orange.shade600,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    BillPrinterService.isConnected
+                        ? 'Printer Connected: ${BillPrinterService.selectedDevice?.name ?? 'Unknown'}'
+                        : 'No printer connected',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color:
+                          BillPrinterService.isConnected
+                              ? Colors.green.shade700
+                              : Colors.orange.shade700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _showPrintPreview,
+                    icon: const Icon(Icons.preview),
+                    label: const Text('Preview'),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      side: BorderSide(color: Colors.blue.shade300),
+                      foregroundColor: Colors.blue.shade600,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _isPrinting ? null : _printBill,
+                    icon:
+                        _isPrinting
+                            ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  Colors.white,
+                                ),
+                              ),
+                            )
+                            : const Icon(Icons.print),
+                    label: Text(_isPrinting ? 'Printing...' : 'Print'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green.shade600,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (!BillPrinterService.isConnected) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: SizedBox(
+                width: double.infinity,
+                child: TextButton.icon(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const PrinterSelectionScreen(),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.settings),
+                  label: const Text('Connect Printer'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.blue.shade600,
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFloatingPrintButton() {
+    if (!BillPrinterService.isConnected || _isPrinting) {
+      return const SizedBox.shrink();
+    }
+
+    return FloatingActionButton.extended(
+      onPressed: _printBill,
+      backgroundColor: Colors.green.shade600,
+      foregroundColor: Colors.white,
+      icon: const Icon(Icons.print),
+      label: const Text('Print'),
+      tooltip: 'Print Bill',
     );
   }
 }

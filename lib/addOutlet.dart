@@ -1,11 +1,13 @@
 // lib/screens/outlets/add_outlet_screen.dart
+// ignore_for_file: file_names
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:lumorabiz_billing/services/location/location_service.dart';
 import 'package:provider/provider.dart';
 import 'dart:io';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import '../../models/outlet.dart';
 import '../../providers/auth_provider.dart';
@@ -208,7 +210,7 @@ class _AddOutletState extends State<AddOutlet> with TickerProviderStateMixin {
       final Uint8List imageBytes = await _outletImage!.readAsBytes();
       return base64Encode(imageBytes);
     } catch (e) {
-      print('Error converting image to base64: $e');
+      debugPrint('Error converting image to base64: $e');
       return null;
     }
   }
@@ -217,16 +219,27 @@ class _AddOutletState extends State<AddOutlet> with TickerProviderStateMixin {
     setState(() => _isLocationLoading = true);
 
     try {
-      // TODO: Implement location service integration
-      // For now, showing demo coordinates
-      await Future.delayed(const Duration(seconds: 2));
+      // Use the actual LocationService
+      final result = await LocationService.getCurrentLocation();
 
-      setState(() {
-        _latitudeController.text = '6.0535'; // Matara, Sri Lanka demo
-        _longitudeController.text = '80.5550';
-      });
+      if (result['success'] == true) {
+        setState(() {
+          _latitudeController.text = result['latitude'].toStringAsFixed(6);
+          _longitudeController.text = result['longitude'].toStringAsFixed(6);
+        });
+        _showSnackBar('Location updated successfully!');
+      } else {
+        final error = result['error'] as String;
 
-      _showSnackBar('Location updated successfully!');
+        // Handle specific error cases
+        if (error.contains('Location services are disabled')) {
+          _showLocationServicesDialog();
+        } else if (error.contains('Location permission')) {
+          _showPermissionDialog();
+        } else {
+          _showSnackBar(error, isError: true);
+        }
+      }
     } catch (e) {
       _showSnackBar('Error getting location: $e', isError: true);
     } finally {
@@ -235,12 +248,15 @@ class _AddOutletState extends State<AddOutlet> with TickerProviderStateMixin {
   }
 
   void _showSnackBar(String message, {bool isError = false}) {
+    if (!mounted) return;
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
         backgroundColor: isError ? Colors.red.shade400 : Colors.green.shade400,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        duration: Duration(seconds: isError ? 4 : 3),
       ),
     );
   }
@@ -389,6 +405,93 @@ class _AddOutletState extends State<AddOutlet> with TickerProviderStateMixin {
     });
   }
 
+  void _showLocationServicesDialog() {
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            title: Row(
+              children: [
+                Icon(Icons.location_off, color: Colors.orange.shade600),
+                const SizedBox(width: 8),
+                const Text('Location Services Disabled'),
+              ],
+            ),
+            content: const Text(
+              'Location services are turned off. Please enable location services in your device settings to get your current location.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  Navigator.pop(context);
+                  final opened = await LocationService.openLocationSettings();
+                  if (!opened && mounted) {
+                    _showSnackBar(
+                      'Could not open location settings',
+                      isError: true,
+                    );
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.orange.shade600,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Open Settings'),
+              ),
+            ],
+          ),
+    );
+  }
+
+  void _showPermissionDialog() {
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            title: Row(
+              children: [
+                Icon(Icons.location_disabled, color: Colors.red.shade600),
+                const SizedBox(width: 8),
+                const Text('Location Permission Required'),
+              ],
+            ),
+            content: const Text(
+              'This app needs location permission to get your current coordinates. Please allow location access in app settings.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  Navigator.pop(context);
+                  final opened = await LocationService.openAppSettings();
+                  if (!opened && mounted) {
+                    _showSnackBar('Could not open app settings', isError: true);
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red.shade600,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Open Settings'),
+              ),
+            ],
+          ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -411,7 +514,6 @@ class _AddOutletState extends State<AddOutlet> with TickerProviderStateMixin {
           color: Colors.white,
         ),
       ),
-
       actions: [
         Consumer<OutletProvider>(
           builder: (context, outletProvider, child) {
@@ -693,6 +795,11 @@ class _AddOutletState extends State<AddOutlet> with TickerProviderStateMixin {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildSectionTitle('Location Coordinates'),
+        const SizedBox(height: 8),
+        Text(
+          'Get precise coordinates for delivery and navigation',
+          style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+        ),
         const SizedBox(height: 16),
         Row(
           children: [
@@ -704,13 +811,18 @@ class _AddOutletState extends State<AddOutlet> with TickerProviderStateMixin {
                 icon: Icons.my_location,
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
+                  signed: true,
                 ),
                 validator: (value) {
                   if (value?.isEmpty ?? true) {
                     return 'Latitude is required';
                   }
-                  if (double.tryParse(value!) == null) {
+                  final lat = double.tryParse(value!);
+                  if (lat == null) {
                     return 'Enter valid latitude';
+                  }
+                  if (lat < -90 || lat > 90) {
+                    return 'Latitude must be between -90 and 90';
                   }
                   return null;
                 },
@@ -725,13 +837,18 @@ class _AddOutletState extends State<AddOutlet> with TickerProviderStateMixin {
                 icon: Icons.explore,
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
+                  signed: true,
                 ),
                 validator: (value) {
                   if (value?.isEmpty ?? true) {
                     return 'Longitude is required';
                   }
-                  if (double.tryParse(value!) == null) {
+                  final lng = double.tryParse(value!);
+                  if (lng == null) {
                     return 'Enter valid longitude';
+                  }
+                  if (lng < -180 || lng > 180) {
+                    return 'Longitude must be between -180 and 180';
                   }
                   return null;
                 },
@@ -742,14 +859,17 @@ class _AddOutletState extends State<AddOutlet> with TickerProviderStateMixin {
         const SizedBox(height: 16),
         SizedBox(
           width: double.infinity,
-          child: OutlinedButton.icon(
+          child: ElevatedButton.icon(
             onPressed: _isLocationLoading ? null : _getCurrentLocation,
             icon:
                 _isLocationLoading
                     ? const SizedBox(
                       width: 16,
                       height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
                     )
                     : const Icon(Icons.gps_fixed),
             label: Text(
@@ -757,14 +877,23 @@ class _AddOutletState extends State<AddOutlet> with TickerProviderStateMixin {
                   ? 'Getting Location...'
                   : 'Get Current Location',
             ),
-            style: OutlinedButton.styleFrom(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.deepPurple.shade600,
+              foregroundColor: Colors.white,
               padding: const EdgeInsets.all(16),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
-              side: BorderSide(color: Colors.deepPurple.shade600),
-              foregroundColor: Colors.deepPurple.shade600,
             ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Tip: Make sure GPS is enabled for better accuracy',
+          style: TextStyle(
+            fontSize: 12,
+            color: Colors.grey.shade500,
+            fontStyle: FontStyle.italic,
           ),
         ),
       ],

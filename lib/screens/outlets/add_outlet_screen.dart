@@ -945,7 +945,6 @@ class _AddOutletScreenState extends State<AddOutletScreen>
       }
 
       // Create outlet data
-      final DateTime now = DateTime.now();
       final outletData = {
         'id': outletRef.id,
         'outletName': _outletNameController.text.trim(),

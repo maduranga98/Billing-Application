@@ -1,5 +1,6 @@
+// ignore_for_file: constant_identifier_names
+
 import 'dart:async';
-import 'dart:typed_data';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import 'package:intl/intl.dart';
@@ -210,7 +211,7 @@ class BillPrinterService {
     }
   }
 
-  // UPDATED: Generate optimized bill with loading cost support
+  // UPDATED: Generate optimized bill with loading cost support and improved header
   static List<int> _generateOptimizedReceipt(PrintBill bill) {
     List<int> bytes = [];
 
@@ -251,24 +252,43 @@ class BillPrinterService {
     bytes += _generator!.feed(1);
 
     // === HEADER SECTION ===
+    // Company name with larger text
     bytes += _generator!.text(
       centerWithMargin('Sajith Rice Mill'),
       styles: const PosStyles(bold: true, height: PosTextSize.size2),
     );
 
+    // ADDED: Small gap after company name
+    bytes += _generator!.feed(1);
+
+    // Address
     bytes += _generator!.text(
       centerWithMargin('Sajith Rice Mill,Nadalagamuwa,Wadumunnegedara'),
     );
 
-    bytes += _generator!.text(centerWithMargin('Tel: (077) 92-58293'));
+    // Phone numbers
+    bytes += _generator!.text(
+      centerWithMargin('Tel: (077) 92-58293 |(071) 62-58293 | (037) 22-80830'),
+    );
+
+    // ADDED: Email address
+    bytes += _generator!.text(
+      centerWithMargin('Email: sajithricemill@gmail.com'),
+    );
+
+    // ADDED: Website
+    bytes += _generator!.text(
+      centerWithMargin('Website: www.sajithricemill.com'),
+    );
 
     bytes += _generator!.text(addMargin(mainSeparator));
     bytes += _generator!.feed(1);
 
     // === BILL INFORMATION IN ONE ROW ===
     String billInfo =
+        // ignore: prefer_interpolation_to_compose_strings
         'Bill: LB${bill.billNumber}'.padRight(32) +
-        '${DateFormat('dd/MM/yyyy HH:mm').format(bill.billDate)}';
+        'Date &Time: ${DateFormat('dd/MM/yyyy HH:mm').format(bill.billDate)}';
     bytes += _generator!.text(
       addMargin(billInfo),
       styles: const PosStyles(bold: true),
@@ -277,17 +297,24 @@ class BillPrinterService {
     bytes += _generator!.feed(1);
 
     // === CUSTOMER AND SALES REP INFORMATION IN ROWS ===
-    // Row 1: Customer Name and Sales Rep Name
-    String customerName = _truncateText(bill.customerName, 30);
-    String repName = _truncateText(bill.salesRepName, 30);
+    // UPDATED: Row 1 with truncated customer name and sales rep name
+    String customerName = _truncateText(
+      bill.customerName,
+      15,
+    ); // Limit to 15 characters
+    String repName = _truncateText(
+      bill.salesRepName,
+      15,
+    ); // Limit to 15 characters
+    // ignore: prefer_interpolation_to_compose_strings
     String row1 = 'Customer: $customerName'.padRight(32) + 'Rep: $repName';
     bytes += _generator!.text(addMargin(row1));
 
-    // Row 2: Customer Address and Rep Phone (if available)
+    // UPDATED: Row 2 with truncated customer address and rep phone
     if (bill.outletAddress.isNotEmpty || bill.salesRepPhone.isNotEmpty) {
       String customerAddress =
           bill.outletAddress.isNotEmpty
-              ? _truncateText(bill.outletAddress, 28)
+              ? _truncateText(bill.outletAddress, 15) // Limit to 15 characters
               : '';
       String repPhone = bill.salesRepPhone.isNotEmpty ? bill.salesRepPhone : '';
 
@@ -401,16 +428,18 @@ class BillPrinterService {
       styles: const PosStyles(bold: true),
     );
 
-    bytes += _generator!.feed(2);
+    bytes += _generator!.feed(3);
 
     // === SIGNATURE SECTION (Above dotted line) ===
     String signatureLine = '${'_' * 30}    ${'_' * 30}';
     bytes += _generator!.text(addMargin(signatureLine));
     bytes += _generator!.feed(1);
 
-    // Signature labels
+    // UPDATED: Signature labels with better alignment
+    // Align "Sales Rep Signature" to match the right signature line position
     String signatureLabels =
-        'Customer Signature'.padRight(32) + 'Sales Rep Signature';
+        // ignore: prefer_interpolation_to_compose_strings
+        'Customer Signature'.padRight(34) + 'Sales Rep Signature';
     bytes += _generator!.text(addMargin(signatureLabels));
     bytes += _generator!.feed(1);
 
@@ -419,39 +448,26 @@ class BillPrinterService {
     bytes += _generator!.feed(1);
 
     // === SOLUTION BY SECTION (Below dotted line) ===
+    // UPDATED: Reduced font size for solution section
     bytes += _generator!.text(
       centerWithMargin('Solution by Lumora Ventures Pvt Ltd'),
+      styles: const PosStyles(
+        height: PosTextSize.size1, // Smaller font size
+        width: PosTextSize.size1, // Smaller font width
+      ),
     );
 
-    bytes += _generator!.text(centerWithMargin('Mobile: +94 76 620 6555'));
+    bytes += _generator!.text(
+      centerWithMargin('Mobile: +94 76 620 6555'),
+      styles: const PosStyles(
+        height: PosTextSize.size1, // Smaller font size
+        width: PosTextSize.size1, // Smaller font width
+      ),
+    );
     bytes += _generator!.cut();
 
     return bytes;
   }
-
-  // Update the PAPER_CONFIGS to include your specific configuration
-  static const Map<String, Map<String, dynamic>> PAPER_CONFIGS = {
-    '58mm': {
-      'width': 32,
-      'description': '2.3" thermal paper',
-      'paperSize': PaperSize.mm58,
-    },
-    '80mm': {
-      'width': 42,
-      'description': '3.1" thermal paper',
-      'paperSize': PaperSize.mm80,
-    },
-    '104mm (68 chars)': {
-      'width': 68,
-      'description': '4.1" thermal paper - 68 total, 64 content',
-      'paperSize': PaperSize.mm80,
-    },
-    '112mm': {
-      'width': 64,
-      'description': '4.4" thermal paper',
-      'paperSize': PaperSize.mm80,
-    },
-  };
 
   // Test print functionality using esc_pos_utils_plus
   static Future<bool> testPrint({PaperSize paperSize = PaperSize.mm80}) async {

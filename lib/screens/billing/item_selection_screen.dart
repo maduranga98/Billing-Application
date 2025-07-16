@@ -1,16 +1,13 @@
 // lib/screens/billing/item_selection_screen.dart (Fixed for Multiple Selection)
 import 'package:flutter/material.dart';
 import 'package:lumorabiz_billing/providers/billing_provider.dart';
+import 'package:lumorabiz_billing/screens/billing/bill_preview_screen.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/loading_item.dart';
 import 'item_detail_dialog.dart';
 
-// Extension for lastOrNull
-extension ListExtension<T> on List<T> {
-  T? get lastOrNull => isEmpty ? null : last;
-}
-
+// Update your ItemSelectionScreen navigation method
 class ItemSelectionScreen extends StatefulWidget {
   const ItemSelectionScreen({super.key});
 
@@ -29,12 +26,17 @@ class _ItemSelectionScreenState extends State<ItemSelectionScreen> {
     super.dispose();
   }
 
+  // UPDATED: Remove payment type selection from this screen
   void _proceedToBill() {
     final billingProvider = context.read<BillingProvider>();
     final validation = billingProvider.validateBill();
 
     if (validation['isValid']) {
-      Navigator.pushNamed(context, '/billing/preview');
+      // Navigate to bill preview without payment type parameter
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => const BillPreviewScreen()),
+      );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -45,14 +47,13 @@ class _ItemSelectionScreenState extends State<ItemSelectionScreen> {
     }
   }
 
+  // Rest of your existing methods remain the same...
   void _showItemDetailDialog(LoadingItem item) {
     showDialog(
       context: context,
       builder: (context) => ItemDetailDialog(item: item),
     );
   }
-
-  // REMOVED: Quick add item method - not practical
 
   @override
   Widget build(BuildContext context) {
@@ -65,61 +66,86 @@ class _ItemSelectionScreenState extends State<ItemSelectionScreen> {
         title: Consumer<BillingProvider>(
           builder: (context, billingProvider, child) {
             return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
                   'Select Items',
-                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 18),
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
                 ),
                 if (billingProvider.selectedOutlet != null)
                   Text(
                     billingProvider.selectedOutlet!.outletName,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.normal,
-                    ),
+                    style: const TextStyle(fontSize: 12, color: Colors.white70),
                   ),
               ],
             );
           },
         ),
-        centerTitle: true,
-      ),
-      body: Column(
-        children: [
-          // Total Amount Header
+        actions: [
           Consumer<BillingProvider>(
             builder: (context, billingProvider, child) {
               return Container(
-                width: double.infinity,
-                color: Colors.white,
+                margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(20),
                 ),
                 child: Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Total Amount',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.grey.shade700,
-                            ),
-                          ),
-                          Text(
-                            'Rs.${billingProvider.totalAmount.toStringAsFixed(2)}',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.blue.shade600,
-                            ),
-                          ),
-                          // ADDED: Show item count
-                          if (billingProvider.selectedItems.isNotEmpty)
+                    const Icon(
+                      Icons.shopping_cart,
+                      size: 16,
+                      color: Colors.white,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      '${billingProvider.selectedItems.length}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          // Bottom Action Section - Updated
+          Consumer<BillingProvider>(
+            builder: (context, billingProvider, child) {
+              return Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.grey.withOpacity(0.2),
+                      blurRadius: 8,
+                      offset: const Offset(0, -2),
+                    ),
+                  ],
+                ),
+                child: SafeArea(
+                  child: Row(
+                    children: [
+                      // Bill Summary
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
                             Text(
                               '${billingProvider.selectedItems.length} items selected',
                               style: TextStyle(
@@ -127,35 +153,46 @@ class _ItemSelectionScreenState extends State<ItemSelectionScreen> {
                                 color: Colors.grey.shade600,
                               ),
                             ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    ElevatedButton(
-                      onPressed:
-                          billingProvider.selectedItems.isNotEmpty
-                              ? _proceedToBill
-                              : null,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blue.shade600,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 32,
-                          vertical: 16,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                            Text(
+                              'Rs.${billingProvider.subtotalAmount.toStringAsFixed(2)}',
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black87,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      child: const Text(
-                        'Create Bill',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
+                      const SizedBox(width: 16),
+
+                      // Create Bill Button - Updated
+                      ElevatedButton(
+                        onPressed:
+                            billingProvider.selectedItems.isNotEmpty
+                                ? _proceedToBill // Use the updated method
+                                : null,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blue.shade600,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 32,
+                            vertical: 16,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text(
+                          'Review Bill',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               );
             },
@@ -278,7 +315,7 @@ class _ItemSelectionScreenState extends State<ItemSelectionScreen> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Icon(
-                          Icons.inventory_2_outlined,
+                          Icons.search_off,
                           size: 64,
                           color: Colors.grey.shade400,
                         ),
@@ -286,14 +323,13 @@ class _ItemSelectionScreenState extends State<ItemSelectionScreen> {
                         Text(
                           'No items found',
                           style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w600,
+                            fontSize: 16,
                             color: Colors.grey.shade600,
                           ),
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          'Try adjusting your search or filter criteria',
+                          'Try adjusting your search or filter',
                           style: TextStyle(
                             fontSize: 14,
                             color: Colors.grey.shade500,
@@ -309,9 +345,167 @@ class _ItemSelectionScreenState extends State<ItemSelectionScreen> {
                   itemCount: filteredItems.length,
                   itemBuilder: (context, index) {
                     final item = filteredItems[index];
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: _buildItemCard(item, billingProvider),
+                    final selectedItem = billingProvider.getSelectedItem(
+                      item.productCode,
+                    );
+                    final isSelected = selectedItem != null;
+
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      elevation: 2,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(
+                          color:
+                              isSelected
+                                  ? Colors.blue.shade300
+                                  : Colors.transparent,
+                          width: 2,
+                        ),
+                      ),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(12),
+                        onTap: () => _showItemDetailDialog(item),
+                        child: Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Header Row
+                              Row(
+                                children: [
+                                  // Product Info
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          item.productName,
+                                          style: const TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        Text(
+                                          item.productCode,
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.grey.shade600,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+
+                                  // Selection Status
+                                  if (isSelected)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.blue.shade100,
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: Text(
+                                        '${selectedItem.quantity} bags',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w600,
+                                          color: Colors.blue.shade700,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+
+                              // Details Row
+                              Row(
+                                children: [
+                                  // Price Range
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'Price Range',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: Colors.grey.shade600,
+                                          ),
+                                        ),
+                                        Text(
+                                          'Rs.${item.minPrice.toStringAsFixed(2)} - Rs.${item.maxPrice.toStringAsFixed(2)}',
+                                          style: const TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+
+                                  // Available Quantity
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.center,
+                                      children: [
+                                        Text(
+                                          'Available',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: Colors.grey.shade600,
+                                          ),
+                                        ),
+                                        Text(
+                                          '${item.availableQuantity} bags',
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w500,
+                                            color:
+                                                item.availableQuantity > 0
+                                                    ? Colors.green.shade700
+                                                    : Colors.red.shade700,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+
+                                  // Bag Size
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.end,
+                                      children: [
+                                        Text(
+                                          'Bag Size',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: Colors.grey.shade600,
+                                          ),
+                                        ),
+                                        Text(
+                                          '${item.bagSize}${item.unit}',
+                                          style: const TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                     );
                   },
                 );
@@ -319,315 +513,6 @@ class _ItemSelectionScreenState extends State<ItemSelectionScreen> {
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildItemCard(LoadingItem item, BillingProvider billingProvider) {
-    // FIXED: Show all selected items for this product, not just check if any exists
-    final selectedItems = billingProvider.getSelectedItemsForProduct(
-      item.productCode,
-    );
-    final hasSelectedItems = selectedItems.isNotEmpty;
-    final availableQty = billingProvider.getAvailableQuantityForProduct(
-      item.productCode,
-    );
-    final selectedQty = billingProvider.getSelectedQuantityForProduct(
-      item.productCode,
-    );
-
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
-          color: hasSelectedItems ? Colors.blue.shade300 : Colors.transparent,
-          width: 2,
-        ),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () => _showItemDetailDialog(item),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  // Item Icon
-                  Container(
-                    width: 50,
-                    height: 50,
-                    decoration: BoxDecoration(
-                      color:
-                          hasSelectedItems
-                              ? Colors.blue.shade100
-                              : Colors.grey.shade100,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Icon(
-                      Icons.inventory_2,
-                      color:
-                          hasSelectedItems
-                              ? Colors.blue.shade600
-                              : Colors.grey.shade600,
-                      size: 24,
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-
-                  // Item Details
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          item.productName,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Code: ${item.productCode}',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.grey.shade600,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          'Available: $availableQty ${item.unit}',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color:
-                                availableQty <= 10
-                                    ? Colors.orange.shade700
-                                    : Colors.green.shade700,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  // Selection Status - FIXED: Show multiple selections
-                  if (hasSelectedItems)
-                    Column(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.blue.shade100,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            '${selectedItems.length} entries',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.blue.shade700,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.orange.shade100,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            '$selectedQty bags',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.orange.shade700,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                ],
-              ),
-              const SizedBox(height: 12),
-
-              // FIXED: Show multiple selected items if any
-              if (hasSelectedItems) ...[
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.shade50,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.blue.shade200),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Selected Items:',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.blue.shade700,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      ...selectedItems
-                          .map(
-                            (selectedItem) => Padding(
-                              padding: const EdgeInsets.only(bottom: 4),
-                              child: Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(
-                                    '${selectedItem.quantity} bags @ Rs.${selectedItem.unitPrice.toStringAsFixed(2)}/kg',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: Colors.blue.shade700,
-                                    ),
-                                  ),
-                                  Text(
-                                    'Rs.${selectedItem.totalPrice.toStringAsFixed(2)}',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
-                                      color: Colors.blue.shade700,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          )
-                          .toList(),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-              ],
-
-              // Price Information
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade50,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Column(
-                  children: [
-                    // Price Range
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'Price Range',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey.shade600,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        Text(
-                          'Rs.${item.minPrice.toStringAsFixed(2)} - Rs.${item.maxPrice.toStringAsFixed(2)}/kg',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.grey.shade700,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-
-                    // Default Price
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'Default Price',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey.shade600,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        Text(
-                          'Rs.${item.pricePerKg.toStringAsFixed(2)}/kg',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.green.shade700,
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    // Total for all selected items of this product
-                    if (hasSelectedItems) ...[
-                      const SizedBox(height: 8),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            'Total Selected Value',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey.shade600,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          Text(
-                            'Rs.${selectedItems.fold(0.0, (sum, item) => sum + item.totalPrice).toStringAsFixed(2)}',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.blue.shade700,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 12),
-
-              // Action Buttons - FIXED: Only one button for adding
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed:
-                      availableQty > 0
-                          ? () => _showItemDetailDialog(item)
-                          : null,
-                  icon: const Icon(Icons.add_shopping_cart, size: 18),
-                  label: const Text('Add to Bill'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor:
-                        hasSelectedItems
-                            ? Colors.blue.shade600
-                            : Colors.green.shade600,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }

@@ -107,7 +107,7 @@ class LoadingService {
       return updatedLoading;
     } catch (e) {
       print('Error loading from Firebase: $e');
-      throw e;
+      rethrow;
     }
   }
 
@@ -363,7 +363,7 @@ class LoadingService {
 
       // Update bag quantities for each item by product code
       for (int i = 0; i < itemsData.length; i++) {
-        final item = itemsData[i] as Map<String, dynamic>;
+        final item = itemsData[i];
         final productCode = item['productCode'] as String;
 
         if (itemQuantities.containsKey(productCode)) {
@@ -431,7 +431,7 @@ class LoadingService {
       );
     } catch (e) {
       print('Error updating Firebase bag quantities: $e');
-      throw e;
+      rethrow;
     }
   }
 

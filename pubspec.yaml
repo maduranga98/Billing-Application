@@ -71,8 +71,6 @@ dependencies:
 
   # Printing (Optional - for receipt printing)
   print_bluetooth_thermal: ^1.0.8
-  # flutter_bluetooth_printer: ^2.19.0
-  # bluetooth_print_plus: ^2.4.6
 
   # PDF Generation
   pdf: ^3.10.8
