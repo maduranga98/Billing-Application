@@ -1,6 +1,5 @@
 // lib/models/loading.dart (Updated with new parser)
 import 'dart:convert';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import '../utils/timestamp_parser.dart';
 import 'loading_item.dart';
 import 'today_route.dart';

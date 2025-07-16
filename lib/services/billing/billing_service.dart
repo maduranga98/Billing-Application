@@ -1,59 +1,59 @@
-// lib/services/billing/billing_service.dart (Corrected with proper method signatures)
+// lib/services/billing/billing_service.dart - Corrected Version
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
-import '../../models/bill.dart';
-import '../../models/bill_item.dart';
-import '../../models/selected_bill_item.dart';
-import '../../models/user_session.dart';
-import '../../models/outlet.dart';
-import '../local/database_service.dart';
-import '../loading/loading_service.dart';
+import 'package:lumorabiz_billing/models/bill.dart';
+import 'package:lumorabiz_billing/models/bill_item.dart';
+import 'package:lumorabiz_billing/models/user_session.dart';
+import 'package:lumorabiz_billing/services/local/database_service.dart';
+import 'package:lumorabiz_billing/services/loading/loading_service.dart';
+import 'package:lumorabiz_billing/models/selected_bill_item.dart';
 
 class BillingService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   static final DatabaseService _dbService = DatabaseService();
 
-  // Create a new bill with loading cost support
+  // Create a new bill with items stored directly in the bill document
   static Future<String> createBill({
-    required UserSession session,
-    required Outlet outlet,
+    required String outletId,
+    required String outletName,
+    required String outletAddress,
+    required String outletPhone,
     required List<SelectedBillItem> items,
     required String paymentType,
-    required double loadingCost, // NEW: Loading cost parameter
-    double discountAmount = 0.0,
-    double taxAmount = 0.0,
+    required double loadingCost,
+    required double discountAmount,
+    required double taxAmount,
+    required UserSession session,
   }) async {
     try {
-      // Generate bill ID and number
-      final billId = _generateBillId();
-      final billNumber = _generateBillNumber();
+      // Generate unique bill ID and number
+      final billId = 'bill_${DateTime.now().millisecondsSinceEpoch}';
+      final billNumber = 'BILL-${DateTime.now().millisecondsSinceEpoch}';
       final now = DateTime.now();
 
-      // Calculate subtotal (items only)
-      final subtotalAmount = items.fold(
+      // Calculate totals
+      final subtotalAmount = items.fold<double>(
         0.0,
         (sum, item) => sum + item.totalPrice,
       );
-
-      // Calculate total amount including loading cost
       final totalAmount =
-          subtotalAmount + loadingCost - discountAmount + taxAmount;
+          subtotalAmount + loadingCost + taxAmount - discountAmount;
 
       // Create bill object
       final bill = Bill(
         id: billId,
         billNumber: billNumber,
-        outletId: outlet.id,
-        outletName: outlet.outletName,
-        outletAddress: outlet.address,
-        outletPhone: outlet.phoneNumber,
-        subtotalAmount: subtotalAmount, // NEW: Subtotal field
-        loadingCost: loadingCost, // NEW: Loading cost field
+        outletId: outletId,
+        outletName: outletName,
+        outletAddress: outletAddress,
+        outletPhone: outletPhone,
+        subtotalAmount: subtotalAmount,
+        loadingCost: loadingCost,
         totalAmount: totalAmount,
         discountAmount: discountAmount,
         taxAmount: taxAmount,
         paymentType: paymentType,
-        paymentStatus: paymentType == 'cash' ? 'paid' : 'pending',
+        paymentStatus: paymentType.toLowerCase() == 'cash' ? 'paid' : 'pending',
         ownerId: session.ownerId,
         businessId: session.businessId,
         createdBy: session.employeeId,
@@ -71,7 +71,7 @@ class BillingService {
                   id:
                       '${billId}_${item.originalProductId}_${DateTime.now().millisecondsSinceEpoch}',
                   billId: billId,
-                  productId: item.originalProductId, // Use original product ID
+                  productId: item.originalProductId,
                   productName: item.productName,
                   productCode: item.productCode,
                   quantity: item.quantity,
@@ -88,7 +88,7 @@ class BillingService {
           connectivity.first != ConnectivityResult.none;
 
       if (isOnline) {
-        // Save to Firebase
+        // Save to Firebase with items in the bill document
         await _saveBillToFirebase(bill, billItems, session);
 
         // Update stock quantities in loading
@@ -105,7 +105,7 @@ class BillingService {
     }
   }
 
-  // Save bill to Firebase
+  // Save bill to Firebase with items directly in the bill document
   static Future<void> _saveBillToFirebase(
     Bill bill,
     List<BillItem> billItems,
@@ -114,7 +114,7 @@ class BillingService {
     final batch = _firestore.batch();
 
     try {
-      // Create bill document
+      // Create bill document with items array
       final billRef = _firestore
           .collection('owners')
           .doc(session.ownerId)
@@ -123,6 +123,22 @@ class BillingService {
           .collection('bills')
           .doc(bill.id);
 
+      // Convert bill items to map format for storage
+      final itemsData =
+          billItems
+              .map(
+                (item) => {
+                  'id': item.id,
+                  'productId': item.productId,
+                  'productName': item.productName,
+                  'productCode': item.productCode,
+                  'quantity': item.quantity,
+                  'unitPrice': item.unitPrice,
+                  'totalPrice': item.totalPrice,
+                },
+              )
+              .toList();
+
       batch.set(billRef, {
         'id': bill.id,
         'billNumber': bill.billNumber,
@@ -130,8 +146,8 @@ class BillingService {
         'outletName': bill.outletName,
         'outletAddress': bill.outletAddress,
         'outletPhone': bill.outletPhone,
-        'subtotalAmount': bill.subtotalAmount, // NEW
-        'loadingCost': bill.loadingCost, // NEW
+        'subtotalAmount': bill.subtotalAmount,
+        'loadingCost': bill.loadingCost,
         'totalAmount': bill.totalAmount,
         'discountAmount': bill.discountAmount,
         'taxAmount': bill.taxAmount,
@@ -142,25 +158,23 @@ class BillingService {
         'createdBy': session.employeeId,
         'salesRepName': bill.salesRepName,
         'salesRepPhone': bill.salesRepPhone,
+        'items': itemsData, // Store items directly in the bill document
+        'itemCount': billItems.length, // For quick reference
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
-      // Add bill items as subcollection
-      for (final item in billItems) {
-        final itemRef = billRef.collection('items').doc();
-        batch.set(itemRef, item.toFirestore());
-      }
-
       await batch.commit();
-      print('Bill saved to Firebase successfully');
+      print(
+        'Bill saved to Firebase successfully with ${billItems.length} items',
+      );
     } catch (e) {
       print('Error saving bill to Firebase: $e');
       rethrow;
     }
   }
 
-  // Save bill to local database - CORRECTED METHOD SIGNATURE
+  // Save bill to local database
   static Future<void> _saveBillToLocal(
     Bill bill,
     List<BillItem> billItems,
@@ -171,7 +185,6 @@ class BillingService {
       final billData = bill.toSQLite();
       final billItemsData = billItems.map((item) => item.toSQLite()).toList();
 
-      // CORRECTED: Use proper method signature with two parameters
       await _dbService.insertBill(billData, billItemsData);
 
       print('Bill saved to local database successfully');
@@ -181,17 +194,17 @@ class BillingService {
     }
   }
 
-  // Update loading quantities after bill creation - CORRECTED METHOD CALL
+  // Update loading quantities after bill creation
   static Future<void> _updateLoadingQuantities(
     List<SelectedBillItem> items,
     UserSession session,
   ) async {
     try {
-      // Group items by original product ID to sum quantities
+      // Group items by product code to sum quantities
       final Map<String, int> quantityUpdates = {};
       for (final item in items) {
-        quantityUpdates[item.originalProductId] =
-            (quantityUpdates[item.originalProductId] ?? 0) + item.quantity;
+        quantityUpdates[item.productCode] =
+            (quantityUpdates[item.productCode] ?? 0) + item.quantity;
       }
 
       // Get today's loading to get the loading ID
@@ -201,34 +214,25 @@ class BillingService {
         return;
       }
 
-      // CORRECTED: Use proper method signature with existing method
-      await LoadingService.updateSoldQuantities(
+      // Use LoadingService to update sold quantities with productCode
+      final success = await LoadingService.updateSoldQuantities(
         session: session,
         loadingId: loading.loadingId,
         itemQuantities: quantityUpdates, // productCode -> quantity sold
       );
+
+      if (success) {
+        print('Loading quantities updated successfully');
+      } else {
+        print('Failed to update loading quantities');
+      }
     } catch (e) {
       print('Error updating loading quantities: $e');
       // Don't rethrow - bill creation succeeded, this is just updating stock
     }
   }
 
-  // Generate unique bill ID
-  static String _generateBillId() {
-    return 'BILL_${DateTime.now().millisecondsSinceEpoch}';
-  }
-
-  // Generate bill number
-  static String _generateBillNumber() {
-    final now = DateTime.now();
-    final dateStr =
-        '${now.year.toString().substring(2)}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
-    final timeStr =
-        '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}';
-    return '$dateStr$timeStr';
-  }
-
-  // Get bills for a specific date - CORRECTED METHOD SIGNATURE
+  // Get bills for a specific date
   static Future<List<Bill>> getBillsForDate(
     UserSession session,
     DateTime date,
@@ -245,7 +249,7 @@ class BillingService {
         return await _getBillsFromLocal(session, date);
       }
     } catch (e) {
-      print('Error getting bills: $e');
+      print('Error getting bills for date: $e');
       return [];
     }
   }
@@ -257,7 +261,7 @@ class BillingService {
   ) async {
     try {
       final startOfDay = DateTime(date.year, date.month, date.day);
-      final endOfDay = startOfDay.add(const Duration(days: 1));
+      final endOfDay = DateTime(date.year, date.month, date.day, 23, 59, 59);
 
       final querySnapshot =
           await _firestore
@@ -271,7 +275,10 @@ class BillingService {
                 'createdAt',
                 isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay),
               )
-              .where('createdAt', isLessThan: Timestamp.fromDate(endOfDay))
+              .where(
+                'createdAt',
+                isLessThanOrEqualTo: Timestamp.fromDate(endOfDay),
+              )
               .orderBy('createdAt', descending: true)
               .get();
 
@@ -285,31 +292,115 @@ class BillingService {
     }
   }
 
-  // Get bills from local database - CORRECTED METHOD SIGNATURE
+  // Get bills from local database using existing getBillsForDate method
   static Future<List<Bill>> _getBillsFromLocal(
     UserSession session,
     DateTime date,
   ) async {
     try {
-      final startOfDay = DateTime(date.year, date.month, date.day);
-      final endOfDay = startOfDay.add(const Duration(days: 1));
-
-      // CORRECTED: Use existing getBills method with proper parameters
-      final billsData = await _dbService.getBills(
-        ownerId: session.ownerId,
-        businessId: session.businessId,
-        fromDate: startOfDay,
-        toDate: endOfDay,
+      // Use the specific getBillsForDate method
+      final billsData = await _dbService.getBillsForDate(
+        session.ownerId,
+        session.businessId,
+        date,
       );
 
-      return billsData.map((billData) => Bill.fromSQLite(billData)).toList();
+      // Filter by employee ID since getBillsForDate doesn't filter by createdBy
+      final filteredBills =
+          billsData
+              .where((billData) => billData['created_by'] == session.employeeId)
+              .toList();
+
+      return filteredBills
+          .map((billData) => Bill.fromSQLite(billData))
+          .toList();
     } catch (e) {
       print('Error getting bills from local database: $e');
       return [];
     }
   }
 
-  // Get daily summary with loading cost
+  // Get bill items for a specific bill (now from the bill document itself)
+  static Future<List<BillItem>> getBillItems(
+    String billId,
+    UserSession session,
+  ) async {
+    try {
+      final connectivity = await Connectivity().checkConnectivity();
+      final isOnline =
+          connectivity.isNotEmpty &&
+          connectivity.first != ConnectivityResult.none;
+
+      if (isOnline) {
+        return await _getBillItemsFromFirebase(billId, session);
+      } else {
+        return await _getBillItemsFromLocal(billId, session);
+      }
+    } catch (e) {
+      print('Error getting bill items: $e');
+      return [];
+    }
+  }
+
+  // Get bill items from Firebase (from bill document)
+  static Future<List<BillItem>> _getBillItemsFromFirebase(
+    String billId,
+    UserSession session,
+  ) async {
+    try {
+      final billDoc =
+          await _firestore
+              .collection('owners')
+              .doc(session.ownerId)
+              .collection('businesses')
+              .doc(session.businessId)
+              .collection('bills')
+              .doc(billId)
+              .get();
+
+      if (!billDoc.exists) {
+        print('Bill document not found: $billId');
+        return [];
+      }
+
+      final data = billDoc.data()!;
+      final itemsData = List<Map<String, dynamic>>.from(data['items'] ?? []);
+
+      return itemsData.map((itemData) {
+        return BillItem(
+          id: itemData['id'] ?? '',
+          billId: billId,
+          productId: itemData['productId'] ?? '',
+          productName: itemData['productName'] ?? '',
+          productCode: itemData['productCode'] ?? '',
+          quantity: itemData['quantity'] ?? 0,
+          unitPrice: (itemData['unitPrice'] ?? 0.0).toDouble(),
+          totalPrice: (itemData['totalPrice'] ?? 0.0).toDouble(),
+        );
+      }).toList();
+    } catch (e) {
+      print('Error getting bill items from Firebase: $e');
+      return [];
+    }
+  }
+
+  // Get bill items from local database
+  static Future<List<BillItem>> _getBillItemsFromLocal(
+    String billId,
+    UserSession session,
+  ) async {
+    try {
+      final billItemsData = await _dbService.getBillItems(billId);
+      return billItemsData
+          .map((itemData) => BillItem.fromSQLite(itemData))
+          .toList();
+    } catch (e) {
+      print('Error getting bill items from local database: $e');
+      return [];
+    }
+  }
+
+  // Get daily summary
   static Future<Map<String, dynamic>> getDailySummary(
     UserSession session,
     DateTime date,
@@ -344,7 +435,7 @@ class BillingService {
             break;
         }
 
-        // Count items (would need to fetch from items subcollection/table)
+        // Get item count from bill document directly
         totalItems += await _getBillItemCount(bill.id, session);
       }
 
@@ -377,11 +468,45 @@ class BillingService {
     }
   }
 
-  // Get bill item count
+  // Get bill item count (simplified since items are in the bill document)
   static Future<int> _getBillItemCount(
     String billId,
     UserSession session,
   ) async {
+    try {
+      final connectivity = await Connectivity().checkConnectivity();
+      final isOnline =
+          connectivity.isNotEmpty &&
+          connectivity.first != ConnectivityResult.none;
+
+      if (isOnline) {
+        final billDoc =
+            await _firestore
+                .collection('owners')
+                .doc(session.ownerId)
+                .collection('businesses')
+                .doc(session.businessId)
+                .collection('bills')
+                .doc(billId)
+                .get();
+
+        if (billDoc.exists) {
+          final data = billDoc.data()!;
+          return data['itemCount'] ?? 0; // Use the pre-calculated count
+        }
+        return 0;
+      } else {
+        final items = await _dbService.getBillItems(billId);
+        return items.length;
+      }
+    } catch (e) {
+      print('Error getting bill item count: $e');
+      return 0;
+    }
+  }
+
+  // Get all bills for a user (for listing/searching)
+  static Future<List<Bill>> getAllBills(UserSession session) async {
     try {
       final connectivity = await Connectivity().checkConnectivity();
       final isOnline =
@@ -396,86 +521,41 @@ class BillingService {
                 .collection('businesses')
                 .doc(session.businessId)
                 .collection('bills')
-                .doc(billId)
-                .collection('items')
+                .where('createdBy', isEqualTo: session.employeeId)
+                .orderBy('createdAt', descending: true)
+                .limit(100) // Limit for performance
                 .get();
-        return querySnapshot.docs.length;
+
+        return querySnapshot.docs.map((doc) {
+          final data = doc.data();
+          return Bill.fromFirestore(data);
+        }).toList();
       } else {
-        final items = await _dbService.getBillItems(billId);
-        return items.length;
+        // Use existing getBills method for local data
+        final billsData = await _dbService.getBills(
+          ownerId: session.ownerId,
+          businessId: session.businessId,
+        );
+
+        // Filter by employee ID
+        final filteredBills =
+            billsData
+                .where(
+                  (billData) => billData['created_by'] == session.employeeId,
+                )
+                .toList();
+
+        return filteredBills
+            .map((billData) => Bill.fromSQLite(billData))
+            .toList();
       }
     } catch (e) {
-      print('Error getting bill item count: $e');
-      return 0;
-    }
-  }
-
-  // Get bill items for a specific bill
-  static Future<List<BillItem>> getBillItems(
-    String billId,
-    UserSession session,
-  ) async {
-    try {
-      final connectivity = await Connectivity().checkConnectivity();
-      final isOnline =
-          connectivity.isNotEmpty &&
-          connectivity.first != ConnectivityResult.none;
-
-      if (isOnline) {
-        return await _getBillItemsFromFirebase(billId, session);
-      } else {
-        return await _getBillItemsFromLocal(billId, session);
-      }
-    } catch (e) {
-      print('Error getting bill items: $e');
+      print('Error getting all bills: $e');
       return [];
     }
   }
 
-  // Get bill items from Firebase
-  static Future<List<BillItem>> _getBillItemsFromFirebase(
-    String billId,
-    UserSession session,
-  ) async {
-    try {
-      final querySnapshot =
-          await _firestore
-              .collection('owners')
-              .doc(session.ownerId)
-              .collection('businesses')
-              .doc(session.businessId)
-              .collection('bills')
-              .doc(billId)
-              .collection('items')
-              .get();
-
-      return querySnapshot.docs.map((doc) {
-        final data = doc.data();
-        return BillItem.fromFirestore(data);
-      }).toList();
-    } catch (e) {
-      print('Error getting bill items from Firebase: $e');
-      return [];
-    }
-  }
-
-  // Get bill items from local database
-  static Future<List<BillItem>> _getBillItemsFromLocal(
-    String billId,
-    UserSession session,
-  ) async {
-    try {
-      final billItemsData = await _dbService.getBillItems(billId);
-      return billItemsData
-          .map((itemData) => BillItem.fromSQLite(itemData))
-          .toList();
-    } catch (e) {
-      print('Error getting bill items from local database: $e');
-      return [];
-    }
-  }
-
-  // Update bill payment status - SIMPLIFIED since updateBillPaymentStatus doesn't exist in DatabaseService
+  // Update bill payment status
   static Future<void> updatePaymentStatus(
     UserSession session,
     String billId,
@@ -500,7 +580,9 @@ class BillingService {
               'updatedAt': FieldValue.serverTimestamp(),
             });
       } else {
-        // For now, just print message since updateBillPaymentStatus doesn't exist
+        // For offline, we'd need to add this to sync queue
+        // Since updateBillPaymentStatus doesn't exist in DatabaseService,
+        // we'll just log it for now
         print('Payment status update queued for sync: $billId -> $newStatus');
         // TODO: Add to sync queue when implementing local payment status updates
       }
@@ -510,7 +592,252 @@ class BillingService {
     }
   }
 
-  // Cancel bill (if needed)
+  // Search bills by outlet name or bill number
+  static Future<List<Bill>> searchBills(
+    UserSession session,
+    String searchQuery,
+  ) async {
+    try {
+      final connectivity = await Connectivity().checkConnectivity();
+      final isOnline =
+          connectivity.isNotEmpty &&
+          connectivity.first != ConnectivityResult.none;
+
+      if (isOnline) {
+        // Search in Firebase
+        final querySnapshot =
+            await _firestore
+                .collection('owners')
+                .doc(session.ownerId)
+                .collection('businesses')
+                .doc(session.businessId)
+                .collection('bills')
+                .where('createdBy', isEqualTo: session.employeeId)
+                .orderBy('createdAt', descending: true)
+                .limit(100)
+                .get();
+
+        // Filter results locally (Firestore doesn't support LIKE queries)
+        final bills =
+            querySnapshot.docs
+                .map((doc) => Bill.fromFirestore(doc.data()))
+                .where(
+                  (bill) =>
+                      bill.outletName.toLowerCase().contains(
+                        searchQuery.toLowerCase(),
+                      ) ||
+                      bill.billNumber.toLowerCase().contains(
+                        searchQuery.toLowerCase(),
+                      ),
+                )
+                .toList();
+
+        return bills;
+      } else {
+        // Search in local database using existing getBills method
+        final billsData = await _dbService.getBills(
+          ownerId: session.ownerId,
+          businessId: session.businessId,
+        );
+
+        // Filter by employee and search criteria
+        final filteredBills =
+            billsData.where((billData) {
+              final createdBy = billData['created_by'] as String;
+              final outletName =
+                  (billData['outlet_name'] as String? ?? '').toLowerCase();
+              final billNumber =
+                  (billData['bill_number'] as String? ?? '').toLowerCase();
+              final query = searchQuery.toLowerCase();
+
+              return createdBy == session.employeeId &&
+                  (outletName.contains(query) || billNumber.contains(query));
+            }).toList();
+
+        return filteredBills
+            .map((billData) => Bill.fromSQLite(billData))
+            .toList();
+      }
+    } catch (e) {
+      print('Error searching bills: $e');
+      return [];
+    }
+  }
+
+  // Get bills by payment status
+  static Future<List<Bill>> getBillsByPaymentStatus(
+    UserSession session,
+    String paymentStatus,
+  ) async {
+    try {
+      final connectivity = await Connectivity().checkConnectivity();
+      final isOnline =
+          connectivity.isNotEmpty &&
+          connectivity.first != ConnectivityResult.none;
+
+      if (isOnline) {
+        final querySnapshot =
+            await _firestore
+                .collection('owners')
+                .doc(session.ownerId)
+                .collection('businesses')
+                .doc(session.businessId)
+                .collection('bills')
+                .where('createdBy', isEqualTo: session.employeeId)
+                .where('paymentStatus', isEqualTo: paymentStatus)
+                .orderBy('createdAt', descending: true)
+                .get();
+
+        return querySnapshot.docs.map((doc) {
+          final data = doc.data();
+          return Bill.fromFirestore(data);
+        }).toList();
+      } else {
+        // Use existing getBills method and filter
+        final billsData = await _dbService.getBills(
+          ownerId: session.ownerId,
+          businessId: session.businessId,
+        );
+
+        final filteredBills =
+            billsData
+                .where(
+                  (billData) =>
+                      billData['created_by'] == session.employeeId &&
+                      billData['payment_status'] == paymentStatus,
+                )
+                .toList();
+
+        return filteredBills
+            .map((billData) => Bill.fromSQLite(billData))
+            .toList();
+      }
+    } catch (e) {
+      print('Error getting bills by payment status: $e');
+      return [];
+    }
+  }
+
+  // Sync offline bills to Firebase using existing getPendingBills method
+  static Future<void> syncOfflineBills(UserSession session) async {
+    try {
+      final connectivity = await Connectivity().checkConnectivity();
+      final isOnline =
+          connectivity.isNotEmpty &&
+          connectivity.first != ConnectivityResult.none;
+
+      if (!isOnline) {
+        print('Device is offline, cannot sync bills');
+        return;
+      }
+
+      // Use existing getPendingBills method
+      final unsyncedBills = await _dbService.getPendingBills(
+        session.ownerId,
+        session.businessId,
+      );
+
+      // Filter for bills created by this employee
+      final employeeBills =
+          unsyncedBills
+              .where((billData) => billData['created_by'] == session.employeeId)
+              .toList();
+
+      print('Found ${employeeBills.length} unsynced bills for employee');
+
+      for (final billData in employeeBills) {
+        try {
+          final bill = Bill.fromSQLite(billData);
+          final billItemsData = await _dbService.getBillItems(bill.id);
+          final billItems =
+              billItemsData
+                  .map((itemData) => BillItem.fromSQLite(itemData))
+                  .toList();
+
+          await _saveBillToFirebase(bill, billItems, session);
+
+          print('Synced bill: ${bill.billNumber}');
+        } catch (e) {
+          print('Error syncing bill ${billData['id']}: $e');
+        }
+      }
+
+      print('Offline bills sync completed');
+    } catch (e) {
+      print('Error during bills sync: $e');
+    }
+  }
+
+  // Mark bills as uploaded for a specific date
+  static Future<void> markBillsAsUploaded(
+    UserSession session,
+    DateTime date,
+  ) async {
+    try {
+      await _dbService.markBillsAsUploaded(
+        session.ownerId,
+        session.businessId,
+        date,
+      );
+      print('Bills marked as uploaded for date: ${date.toIso8601String()}');
+    } catch (e) {
+      print('Error marking bills as uploaded: $e');
+    }
+  }
+
+  // Get bill details with items
+  static Future<Map<String, dynamic>?> getBillDetails(
+    String billId,
+    UserSession session,
+  ) async {
+    try {
+      final connectivity = await Connectivity().checkConnectivity();
+      final isOnline =
+          connectivity.isNotEmpty &&
+          connectivity.first != ConnectivityResult.none;
+
+      if (isOnline) {
+        // Get from Firebase
+        final billDoc =
+            await _firestore
+                .collection('owners')
+                .doc(session.ownerId)
+                .collection('businesses')
+                .doc(session.businessId)
+                .collection('bills')
+                .doc(billId)
+                .get();
+
+        if (!billDoc.exists) return null;
+
+        final billData = billDoc.data()!;
+        final bill = Bill.fromFirestore(billData);
+        final items = await getBillItems(billId, session);
+
+        return {'bill': bill, 'items': items};
+      } else {
+        // Get from local database using existing getBillsForDate method
+        final billsData = await _dbService.getBillsForDate(
+          session.ownerId,
+          session.businessId,
+          DateTime.now(), // Use current date or modify to get all bills
+        );
+
+        final billData = billsData.where((b) => b['id'] == billId).firstOrNull;
+        if (billData == null) return null;
+
+        final bill = Bill.fromSQLite(billData);
+        final items = await getBillItems(billId, session);
+
+        return {'bill': bill, 'items': items};
+      }
+    } catch (e) {
+      print('Error getting bill details: $e');
+      return null;
+    }
+  }
+
+  // Cancel bill (placeholder for future implementation)
   static Future<void> cancelBill(UserSession session, String billId) async {
     try {
       // This would involve:

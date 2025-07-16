@@ -4,7 +4,6 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:lumorabiz_billing/providers/billing_provider.dart';
 import 'package:lumorabiz_billing/providers/loading_provider.dart';
 import 'package:lumorabiz_billing/providers/outlet_provider.dart';
-import 'package:lumorabiz_billing/screens/billing/bill_preview_screen.dart';
 import 'package:lumorabiz_billing/screens/billing/bill_success_screen.dart';
 import 'package:lumorabiz_billing/screens/billing/item_selection_screen.dart';
 import 'package:lumorabiz_billing/screens/billing/outlet_selection_screen.dart';
@@ -141,25 +140,6 @@ class LumoraBizApp extends StatelessWidget {
           '/billing/success': (context) => const BillSuccessScreen(),
           '/reports/daily-summary': (context) => const DailySummaryScreen(),
           '/billing/view-bills': (context) => const ViewBillsScreen(),
-        },
-
-        // Handle dynamic routes with parameters
-        onGenerateRoute: (settings) {
-          switch (settings.name) {
-            case '/billing/preview':
-              // Extract paymentType from route arguments
-              final args = settings.arguments as Map<String, dynamic>?;
-              final paymentType = args?['paymentType'] as String? ?? 'cash';
-
-              return MaterialPageRoute(
-                builder:
-                    (context) => BillPreviewScreen(paymentType: paymentType),
-                settings: settings,
-              );
-
-            default:
-              return null; // Let Flutter handle other routes
-          }
         },
       ),
     );

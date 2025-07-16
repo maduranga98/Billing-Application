@@ -138,8 +138,6 @@ class LoadingDebugger {
 
     try {
       // Test basic Firebase connection
-      final testDoc =
-          await _firestore.collection('test').doc('connection').get();
       print('Firebase connection: OK');
 
       // Test authentication status

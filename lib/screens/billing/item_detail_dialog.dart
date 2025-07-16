@@ -357,6 +357,7 @@ class _ItemDetailDialogState extends State<ItemDetailDialog> {
                   const SizedBox(width: 16),
 
                   // Quantity Input
+                  // Quantity Input
                   Expanded(
                     child: TextField(
                       controller: _quantityController,
@@ -368,7 +369,12 @@ class _ItemDetailDialogState extends State<ItemDetailDialog> {
                           borderRadius: BorderRadius.circular(8),
                         ),
                         labelText: 'Quantity',
-                        suffixText: widget.item.unit,
+                        hintText:
+                            'Enter quantity', // Optional: Add hint text that disappears when typing
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 16,
+                        ),
                       ),
                       onChanged: (value) {
                         if (value.isNotEmpty) {
@@ -645,33 +651,31 @@ class _ItemDetailDialogState extends State<ItemDetailDialog> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                ...selectedItems
-                    .map(
-                      (selectedItem) => ListTile(
-                        title: Text(
-                          '${selectedItem.quantity} bags @ Rs.${selectedItem.unitPrice.toStringAsFixed(2)}/kg',
-                        ),
-                        subtitle: Text(
-                          'Total: Rs.${selectedItem.totalPrice.toStringAsFixed(2)}',
-                        ),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete, color: Colors.red),
-                          onPressed: () {
-                            billingProvider.removeItemFromBill(
-                              selectedItem.productId,
-                            );
-                            Navigator.pop(context);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Item removed from bill'),
-                                backgroundColor: Colors.orange.shade600,
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    )
-                    .toList(),
+                ...selectedItems.map(
+                  (selectedItem) => ListTile(
+                    title: Text(
+                      '${selectedItem.quantity} bags @ Rs.${selectedItem.unitPrice.toStringAsFixed(2)}/kg',
+                    ),
+                    subtitle: Text(
+                      'Total: Rs.${selectedItem.totalPrice.toStringAsFixed(2)}',
+                    ),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete, color: Colors.red),
+                      onPressed: () {
+                        billingProvider.removeItemFromBill(
+                          selectedItem.productId,
+                        );
+                        Navigator.pop(context);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Item removed from bill'),
+                            backgroundColor: Colors.orange.shade600,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 16),
                 Row(
                   children: [
@@ -712,23 +716,6 @@ class _ItemDetailDialogState extends State<ItemDetailDialog> {
               ],
             ),
           ),
-    );
-  }
-
-  void _removeItem() {
-    final billingProvider = context.read<BillingProvider>();
-    billingProvider.removeItemFromBillByProductId(
-      widget.item.productCode,
-    ); // Fixed method
-
-    Navigator.pop(context);
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${widget.item.productName} removed from bill'),
-        backgroundColor: Colors.orange.shade600,
-        duration: const Duration(seconds: 2),
-      ),
     );
   }
 }

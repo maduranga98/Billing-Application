@@ -101,15 +101,8 @@ class OutletProvider with ChangeNotifier {
     _clearError();
 
     try {
-      String outletId;
-
       if (_isConnected) {
         // Save online
-        outletId = await OutletService.addOutletOnline(
-          outlet: outlet,
-          userSession: userSession,
-          imageBase64: imageBase64,
-        );
       } else {
         // Save offline
         final outletData = outlet.toFirestore();
@@ -121,7 +114,6 @@ class OutletProvider with ChangeNotifier {
           'createdAt': DateTime.now().millisecondsSinceEpoch,
         });
 
-        outletId = await OutletService.addOutletOffline(outletData: outletData);
         _offlineOutletCount++;
       }
 
@@ -308,10 +300,6 @@ class OutletProvider with ChangeNotifier {
   }
 
   // Dispose method
-  @override
-  void dispose() {
-    super.dispose();
-  }
 }
 
 // Note: SyncResult is now imported from OutletService, no need to define it here

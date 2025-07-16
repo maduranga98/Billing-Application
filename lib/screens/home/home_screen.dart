@@ -1,3 +1,4 @@
+// lib/screens/home/home_screen.dart
 import 'package:flutter/material.dart';
 import 'package:lumorabiz_billing/addOutlet.dart';
 import 'package:provider/provider.dart';
@@ -39,7 +40,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _checkConnectivity();
     _startTimer();
     _loadTodaysData();
-    _checkPendingUploadData(); // ADDED
+    _checkPendingUploadData();
   }
 
   void _startTimer() {
@@ -84,7 +85,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     });
   }
 
-  // ADDED: Check for pending upload data
+  // Check for pending upload data using comprehensive unloading service
   void _checkPendingUploadData() async {
     final authProvider = context.read<AuthProvider>();
     if (authProvider.currentSession != null) {
@@ -188,7 +189,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
-  // UPDATED: Enhanced upload data method
+  // Comprehensive upload data method using your UnloadingService
   void _uploadData() async {
     if (!_isConnected) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -211,15 +212,33 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       return;
     }
 
-    // Check if there's data to upload
-    if (_pendingUploadData != null && !_pendingUploadData!['hasPendingData']) {
+    // Validate before upload using your comprehensive service
+    final validation = await UnloadingService.validateBeforeUpload(
+      authProvider.currentSession!,
+    );
+
+    if (!validation['isValid']) {
+      final errors = validation['errors'] as List<String>;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No pending data to upload.'),
-          backgroundColor: Colors.orange,
+        SnackBar(
+          content: Text('Cannot upload: ${errors.join(', ')}'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
         ),
       );
       return;
+    }
+
+    // Show warnings if any
+    final warnings = validation['warnings'] as List<String>;
+    if (warnings.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Warning: ${warnings.join(', ')}'),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 3),
+        ),
+      );
     }
 
     setState(() => _isUploading = true);
@@ -228,43 +247,50 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       // Show uploading message
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Uploading data to server...'),
+          content: Text('Uploading day data to server...'),
           backgroundColor: Colors.blue,
           duration: Duration(seconds: 2),
         ),
       );
 
-      // Upload data using UnloadingService
+      // Use your comprehensive uploadDayData method
       final result = await UnloadingService.uploadDayData(
         session: authProvider.currentSession!,
       );
 
       if (mounted) {
         if (result['success']) {
-          // Show success message with details
+          // Success - show detailed results
           final uploadedBills = result['uploadedBills'] as int;
-          final totalValue = result['details']['totalValue'] as double;
+          final details = result['details'] as Map<String, dynamic>;
+          final totalValue = details['totalValue'] as double;
 
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                'Upload successful! $uploadedBills bills uploaded (Rs.${totalValue.toStringAsFixed(2)})',
+                'Upload successful!\n'
+                '$uploadedBills bills uploaded\n'
+                'Total value: Rs.${totalValue.toStringAsFixed(2)}\n'
+                'Unloading summary created',
               ),
               backgroundColor: Colors.green,
-              duration: const Duration(seconds: 4),
+              duration: const Duration(seconds: 5),
             ),
           );
 
           // Refresh pending data
           _checkPendingUploadData();
+
+          // Show detailed success dialog
+          _showUploadSuccessDialog(result);
         } else {
-          // Show error message
+          // Handle errors
           final errors = result['errors'] as List<String>;
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Upload failed: ${errors.join(', ')}'),
+              content: Text('Upload failed:\n${errors.join('\n')}'),
               backgroundColor: Colors.red,
-              duration: const Duration(seconds: 4),
+              duration: const Duration(seconds: 5),
             ),
           );
         }
@@ -284,6 +310,55 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         setState(() => _isUploading = false);
       }
     }
+  }
+
+  // Show detailed upload success dialog
+  void _showUploadSuccessDialog(Map<String, dynamic> result) {
+    final details = result['details'] as Map<String, dynamic>;
+    final uploadedBills = result['uploadedBills'] as int;
+
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.green, size: 28),
+                const SizedBox(width: 8),
+                const Text('Upload Complete'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('✓ $uploadedBills bills uploaded'),
+                Text(
+                  '✓ Total Sales: Rs.${details['totalValue'].toStringAsFixed(2)}',
+                ),
+                Text(
+                  '✓ Cash: Rs.${details['totalCash']?.toStringAsFixed(2) ?? '0.00'}',
+                ),
+                Text(
+                  '✓ Credit: Rs.${details['totalCredit']?.toStringAsFixed(2) ?? '0.00'}',
+                ),
+                Text(
+                  '✓ Cheque: Rs.${details['totalCheque']?.toStringAsFixed(2) ?? '0.00'}',
+                ),
+                const SizedBox(height: 8),
+                const Text('✓ Unloading summary created'),
+                const Text('✓ Stock quantities updated'),
+                const Text('✓ All data synchronized'),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+    );
   }
 
   @override
@@ -326,7 +401,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
           if (authProvider.currentSession != null) {
             await loadingProvider.refreshLoading(authProvider.currentSession!);
-            _checkPendingUploadData(); // ADDED: Refresh upload data too
+            _checkPendingUploadData(); // Refresh upload data too
           }
         },
         child: SingleChildScrollView(
@@ -337,11 +412,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Date and Route Info (Simple Text)
+                // Date and Route Info
                 _buildInfoSection(),
                 const SizedBox(height: 24),
 
-                // ADDED: Pending Upload Alert (if any)
+                // Pending Upload Alert
                 _buildPendingUploadAlert(),
 
                 // Today's Prices Section
@@ -363,7 +438,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  // ADDED: Pending upload alert widget
+  // Enhanced pending upload alert widget
   Widget _buildPendingUploadAlert() {
     if (_pendingUploadData == null || !_pendingUploadData!['hasPendingData']) {
       return const SizedBox.shrink();
@@ -371,6 +446,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     final billsCount = _pendingUploadData!['pendingBillsCount'] as int;
     final totalValue = _pendingUploadData!['totalPendingValue'] as double;
+    final hasLoading = _pendingUploadData!['hasLoading'] as bool? ?? false;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 24),
@@ -388,7 +464,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               Icon(Icons.upload_outlined, color: Colors.orange[700], size: 20),
               const SizedBox(width: 8),
               Text(
-                'Pending Upload',
+                'Ready to Upload',
                 style: TextStyle(
                   fontWeight: FontWeight.w600,
                   color: Colors.orange[700],
@@ -399,14 +475,28 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ),
           const SizedBox(height: 8),
           Text(
-            '$billsCount bills worth Rs.${totalValue.toStringAsFixed(2)} are ready to upload.',
+            '$billsCount bills worth Rs.${totalValue.toStringAsFixed(2)} ready for unloading.',
             style: TextStyle(color: Colors.orange[700]),
           ),
+          if (!hasLoading) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Warning: No loading data found for today.',
+              style: TextStyle(
+                color: Colors.red[600],
+                fontSize: 12,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              onPressed: _isConnected && !_isUploading ? _uploadData : null,
+              onPressed:
+                  _isConnected && !_isUploading && hasLoading
+                      ? _uploadData
+                      : null,
               icon:
                   _isUploading
                       ? const SizedBox(
@@ -420,9 +510,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         ),
                       )
                       : const Icon(Icons.cloud_upload, size: 18),
-              label: Text(_isUploading ? 'Uploading...' : 'Upload Now'),
+              label: Text(_isUploading ? 'Uploading...' : 'Upload Day Data'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.orange[600],
+                backgroundColor:
+                    (_isConnected && hasLoading && !_isUploading)
+                        ? Colors.orange[600]
+                        : Colors.grey[400],
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 shape: RoundedRectangleBorder(

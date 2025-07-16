@@ -461,14 +461,14 @@ class DatabaseService {
   ) async {
     final db = await database;
 
-    // Calculate date range (start and end of day)
+    // Start and end of the day
     final startOfDay = DateTime(date.year, date.month, date.day);
-    final endOfDay = DateTime(date.year, date.month, date.day, 23, 59, 59);
+    final endOfDay = startOfDay.add(const Duration(days: 1));
 
-    final List<Map<String, dynamic>> maps = await db.query(
+    return await db.query(
       'bills',
       where:
-          'owner_id = ? AND business_id = ? AND created_at >= ? AND created_at <= ?',
+          'owner_id = ? AND business_id = ? AND created_at >= ? AND created_at < ?',
       whereArgs: [
         ownerId,
         businessId,
@@ -477,8 +477,6 @@ class DatabaseService {
       ],
       orderBy: 'created_at DESC',
     );
-
-    return maps;
   }
 
   // NEW: Get pending bills (not uploaded)
