@@ -784,9 +784,12 @@ class _OutletListScreenState extends State<OutletListScreen>
                   );
 
                   if (authProvider.currentSession != null) {
+                    // FIXED: Use correct method signature
                     final success = await outletProvider.deleteOutlet(
-                      outlet.id,
-                      authProvider.currentSession!,
+                      outletId: outlet.id, // FIXED: Named parameter
+                      userSession:
+                          authProvider
+                              .currentSession!, // FIXED: Named parameter
                     );
 
                     if (success && mounted) {
@@ -843,17 +846,27 @@ class _OutletListScreenState extends State<OutletListScreen>
     final outletProvider = Provider.of<OutletProvider>(context, listen: false);
 
     if (authProvider.currentSession != null) {
-      final result = await outletProvider.syncOfflineOutlets(
-        authProvider.currentSession!,
-      );
+      try {
+        // FIXED: syncOfflineOutlets returns void, not a result object
+        await outletProvider.syncOfflineOutlets(authProvider.currentSession!);
 
-      if (result != null && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(result.message),
-            backgroundColor: result.success ? Colors.green : Colors.orange,
-          ),
-        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Outlets synced successfully!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to sync outlets: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
       }
     }
   }

@@ -165,30 +165,92 @@ class Loading {
   }
 
   Map<String, dynamic> toSQLite() {
-    return {
-      'loading_id': loadingId,
-      'business_id': businessId,
-      'owner_id': ownerId,
-      'route_id': routeId,
-      'sales_rep_id': salesRepId,
-      'sales_rep_name': salesRepName,
-      'sales_rep_email': salesRepEmail,
-      'sales_rep_phone': salesRepPhone,
-      'status': status,
-      'item_count': itemCount,
-      'total_bags': totalBags,
-      'total_value': totalValue,
-      'total_weight': totalWeight,
-      'items': jsonEncode(items.map((item) => item.toMap()).toList()),
-      'today_route':
-          todayRoute != null ? jsonEncode(todayRoute!.toMap()) : null,
-      'created_at': createdAt.millisecondsSinceEpoch,
-      'created_by': createdBy,
-      'paddy_price_date': paddyPriceDate,
-      'today_paddy_prices':
-          todayPaddyPrices != null ? jsonEncode(todayPaddyPrices) : null,
-      'sync_status': 'synced',
-    };
+    try {
+      // Convert items to serializable format
+      final serializedItems =
+          items.map((item) {
+            final itemMap = item.toMap();
+            // Ensure all DateTime objects are converted to milliseconds
+            final cleanedItemMap = <String, dynamic>{};
+            for (final entry in itemMap.entries) {
+              if (entry.value is DateTime) {
+                cleanedItemMap[entry.key] =
+                    (entry.value as DateTime).millisecondsSinceEpoch;
+              } else {
+                cleanedItemMap[entry.key] = entry.value;
+              }
+            }
+            return cleanedItemMap;
+          }).toList();
+
+      // Convert todayRoute to serializable format
+      Map<String, dynamic>? serializedRoute;
+      if (todayRoute != null) {
+        final routeMap = todayRoute!.toMap();
+        serializedRoute = <String, dynamic>{};
+        for (final entry in routeMap.entries) {
+          if (entry.value is DateTime) {
+            serializedRoute[entry.key] =
+                (entry.value as DateTime).millisecondsSinceEpoch;
+          } else {
+            serializedRoute[entry.key] = entry.value;
+          }
+        }
+      }
+
+      return {
+        'loading_id': loadingId,
+        'business_id': businessId,
+        'owner_id': ownerId,
+        'route_id':
+            routeId.isNotEmpty
+                ? routeId
+                : 'unknown', // FIXED: Handle empty route_id
+        'sales_rep_id': salesRepId,
+        'sales_rep_name': salesRepName,
+        'sales_rep_email': salesRepEmail,
+        'sales_rep_phone': salesRepPhone,
+        'status': status,
+        'item_count': itemCount,
+        'total_bags': totalBags,
+        'total_value': totalValue,
+        'total_weight': totalWeight,
+        'items': jsonEncode(serializedItems), // Use serialized items
+        'today_route':
+            serializedRoute != null ? jsonEncode(serializedRoute) : null,
+        'created_at': createdAt.millisecondsSinceEpoch,
+        'created_by': createdBy,
+        'paddy_price_date': paddyPriceDate,
+        'today_paddy_prices':
+            todayPaddyPrices != null ? jsonEncode(todayPaddyPrices) : null,
+        'sync_status': 'synced',
+      };
+    } catch (e) {
+      print('Error converting Loading to SQLite format: $e');
+      // Return minimal data structure on error to prevent database insertion failure
+      return {
+        'loading_id': loadingId,
+        'business_id': businessId,
+        'owner_id': ownerId,
+        'route_id': routeId.isNotEmpty ? routeId : 'unknown',
+        'sales_rep_id': salesRepId,
+        'sales_rep_name': salesRepName,
+        'sales_rep_email': salesRepEmail,
+        'sales_rep_phone': salesRepPhone,
+        'status': status,
+        'item_count': 0,
+        'total_bags': 0,
+        'total_value': 0.0,
+        'total_weight': 0.0,
+        'items': '[]',
+        'today_route': null,
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+        'created_by': createdBy,
+        'paddy_price_date': null,
+        'today_paddy_prices': null,
+        'sync_status': 'synced',
+      };
+    }
   }
 
   // Helper methods for safe parsing

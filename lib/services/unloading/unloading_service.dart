@@ -1,4 +1,3 @@
-// lib/services/unloading/unloading_service.dart (FIXED VERSION)
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import '../../models/unloading_summary.dart';
@@ -14,7 +13,8 @@ class UnloadingService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   static final DatabaseService _dbService = DatabaseService();
 
-  /// Main upload process - uploads day summary and all bills
+  /// Main upload process - uploads day summary with bill numbers and detailed quantities
+  /// Ensures only one unloading per sales rep per day
   static Future<Map<String, dynamic>> uploadDayData({
     required UserSession session,
     DateTime? date,
@@ -41,8 +41,23 @@ class UnloadingService {
       }
 
       print(
-        'Starting upload process for date: ${uploadDate.toIso8601String()}',
+        'Starting enhanced upload process for date: ${uploadDate.toIso8601String()}',
       );
+
+      // NEW: Check if unloading already exists for this sales rep on this date
+      final existingUnloading = await _dbService.getUnloadingSummaryByDate(
+        session.ownerId,
+        session.businessId,
+        session.employeeId,
+        uploadDate,
+      );
+
+      if (existingUnloading != null) {
+        result['errors'].add(
+          'Unloading already completed for ${uploadDate.toLocal().toString().split(' ')[0]}. Only one unloading per day is allowed.',
+        );
+        return result;
+      }
 
       // Step 1: Get today's loading data
       final loading = await LoadingService.getTodaysLoading(session);
@@ -55,15 +70,31 @@ class UnloadingService {
       final bills = await _getBillsForDate(session, uploadDate);
       print('Found ${bills.length} bills to upload');
 
-      // Step 3: Generate unloading summary
-      final unloadingSummary = await _generateUnloadingSummary(
+      if (bills.isEmpty) {
+        result['errors'].add(
+          'No bills found for today. Cannot create unloading without sales data.',
+        );
+        return result;
+      }
+
+      // Step 3: Generate enhanced unloading summary with bill numbers and detailed quantities
+      final unloadingSummary = await _generateEnhancedUnloadingSummary(
         session: session,
         loading: loading,
         bills: bills,
         date: uploadDate,
       );
 
-      // Step 4: Upload unloading summary to Firebase
+      // Step 4: Save unloading summary locally first (with one-per-day validation)
+      try {
+        await _dbService.saveEnhancedUnloadingSummary(unloadingSummary);
+        print('Unloading summary saved locally with validation');
+      } catch (e) {
+        result['errors'].add('Failed to save unloading summary: $e');
+        return result;
+      }
+
+      // Step 5: Upload unloading summary to Firebase
       final unloadingResult = await _uploadUnloadingSummary(
         session: session,
         summary: unloadingSummary,
@@ -76,7 +107,7 @@ class UnloadingService {
         return result;
       }
 
-      // Step 5: Upload all bills to Firebase
+      // Step 6: Upload all bills to Firebase
       final billsResult = await _uploadBillsToFirebase(session, bills);
 
       result['success'] = true;
@@ -88,29 +119,39 @@ class UnloadingService {
         'billsFailed': billsResult['failedCount'],
         'totalValue': unloadingSummary.totalSalesValue,
         'totalBills': bills.length,
+        'totalCash': unloadingSummary.totalCashSales,
+        'totalCredit': unloadingSummary.totalCreditSales,
+        'totalCheque': unloadingSummary.totalChequeSales,
+        'billNumbers': bills.map((bill) => bill.billNumber).toList(),
+        'uploadDate': uploadDate.toLocal().toString().split(' ')[0],
+        'salesRep': session.name,
       };
 
-      // Step 6: Mark local data as uploaded
+      // Step 7: Mark local data as uploaded
       await _markDataAsUploaded(session, uploadDate);
 
-      print('Upload completed successfully');
+      print(
+        'Enhanced upload completed successfully - One unloading per day enforced',
+      );
       return result;
     } catch (e) {
-      print('Error in upload process: $e');
+      print('Error in enhanced upload process: $e');
       result['errors'].add('Upload failed: $e');
       return result;
     }
   }
 
-  /// Generate comprehensive unloading summary
-  static Future<UnloadingSummary> _generateUnloadingSummary({
+  /// Generate enhanced unloading summary with bill numbers and detailed quantities
+  static Future<UnloadingSummary> _generateEnhancedUnloadingSummary({
     required UserSession session,
     required Loading loading,
     required List<Bill> bills,
     required DateTime date,
   }) async {
     try {
-      print('Generating unloading summary...');
+      print(
+        'Generating enhanced unloading summary with bill numbers and quantities...',
+      );
 
       // Calculate totals from bills
       double totalSalesValue = 0.0;
@@ -119,8 +160,20 @@ class UnloadingService {
       double totalChequeSales = 0.0;
       int totalBillCount = bills.length;
 
+      // Collect bill numbers and payment details
+      final List<Map<String, dynamic>> billDetails = [];
       for (final bill in bills) {
         totalSalesValue += bill.totalAmount;
+
+        // Add bill details
+        billDetails.add({
+          'billNumber': bill.billNumber,
+          'billId': bill.id,
+          'outletName': bill.outletName,
+          'amount': bill.totalAmount,
+          'paymentType': bill.paymentType,
+          'createdAt': bill.createdAt.toIso8601String(),
+        });
 
         switch (bill.paymentType.toLowerCase()) {
           case 'cash':
@@ -135,7 +188,7 @@ class UnloadingService {
         }
       }
 
-      // Calculate items sold by product code
+      // Calculate items sold by product code with detailed tracking
       final Map<String, Map<String, dynamic>> itemsSold = {};
       for (final bill in bills) {
         final billItems = await _getBillItems(session, bill.id);
@@ -147,27 +200,71 @@ class UnloadingService {
               'quantitySold': 0,
               'totalValue': 0.0,
               'unitPrice': item.unitPrice,
+              'billNumbers': <String>[], // Track which bills sold this item
+              'salesCount': 0, // Number of different sales
             };
           }
           itemsSold[item.productCode]!['quantitySold'] += item.quantity;
           itemsSold[item.productCode]!['totalValue'] += item.totalPrice;
+
+          // Add bill number to track sales
+          final billNumbers =
+              itemsSold[item.productCode]!['billNumbers'] as List<String>;
+          if (!billNumbers.contains(bill.billNumber)) {
+            billNumbers.add(bill.billNumber);
+            itemsSold[item.productCode]!['salesCount']++;
+          }
         }
       }
 
-      // Calculate remaining stock from loading
+      // Calculate detailed remaining stock from loading with enhanced tracking
       final Map<String, Map<String, dynamic>> remainingStock = {};
       for (final item in loading.items) {
+        final soldData = itemsSold[item.productCode];
+        final quantitySold = soldData?['quantitySold'] ?? 0;
+        final salesValue = soldData?['totalValue'] ?? 0.0;
+
         remainingStock[item.productCode] = {
           'productCode': item.productCode,
           'productName': item.itemName,
+          // Loading quantities
           'initialQuantity': item.bagsCount, // Original loaded quantity
-          'remainingQuantity': item.bagQuantity, // Current remaining
-          'soldQuantity': item.bagsCount - item.bagQuantity,
+          'initialValue': item.bagsCount * item.pricePerKg * item.bagSize,
+          'initialWeight': item.bagsCount * item.bagSize,
+
+          // Current remaining quantities
+          'remainingQuantity':
+              item.bagQuantity, // Current remaining after all sales
           'remainingValue': item.bagQuantity * item.pricePerKg * item.bagSize,
+          'remainingWeight': item.bagQuantity * item.bagSize,
+
+          // Sold quantities
+          'soldQuantity': quantitySold,
+          'soldValue': salesValue,
+          'soldWeight': quantitySold * item.bagSize,
+
+          // Validation - should match
+          'calculatedRemaining': item.bagsCount - quantitySold,
+          'quantityMatch': (item.bagsCount - quantitySold) == item.bagQuantity,
+
+          // Unit details
+          'pricePerKg': item.pricePerKg,
+          'bagSize': item.bagSize,
+          'unitPrice': item.pricePerKg * item.bagSize,
+
+          // Sales analytics
+          'salesPercentage':
+              item.bagsCount > 0 ? (quantitySold / item.bagsCount) * 100 : 0.0,
+          'salesCount': soldData?['salesCount'] ?? 0,
+          'avgQuantityPerSale':
+              soldData != null && soldData['salesCount'] > 0
+                  ? quantitySold / soldData['salesCount']
+                  : 0.0,
         };
       }
 
-      return UnloadingSummary(
+      // Create comprehensive unloading summary
+      final enhancedSummary = UnloadingSummary(
         id: '', // Will be set by Firebase
         loadingId: loading.loadingId,
         businessId: session.businessId,
@@ -195,23 +292,97 @@ class UnloadingService {
         createdAt: DateTime.now(),
         createdBy: session.employeeId,
 
-        // Additional details
-        notes: 'Auto-generated unloading summary',
+        // Enhanced details
+        notes: _generateUnloadingNotes(
+          bills: bills,
+          loading: loading,
+          itemsSold: itemsSold,
+          remainingStock: remainingStock,
+        ),
         status: 'completed',
       );
+
+      print(
+        'Enhanced unloading summary generated with ${bills.length} bills and detailed quantities',
+      );
+      return enhancedSummary;
     } catch (e) {
-      print('Error generating unloading summary: $e');
+      print('Error generating enhanced unloading summary: $e');
       rethrow;
     }
   }
 
-  /// Upload unloading summary to Firebase
+  /// Generate comprehensive notes for unloading summary
+  static String _generateUnloadingNotes({
+    required List<Bill> bills,
+    required Loading loading,
+    required Map<String, Map<String, dynamic>> itemsSold,
+    required Map<String, Map<String, dynamic>> remainingStock,
+  }) {
+    final notes = StringBuffer();
+
+    // Basic summary
+    notes.writeln('DAILY UNLOADING SUMMARY');
+    notes.writeln('========================');
+    notes.writeln('Date: ${DateTime.now().toLocal().toString().split(' ')[0]}');
+    notes.writeln('Loading ID: ${loading.loadingId}');
+    notes.writeln('Route: ${loading.todayRoute?.name ?? 'Unknown'}');
+    notes.writeln('');
+
+    // Bill numbers
+    notes.writeln('BILL NUMBERS (${bills.length} bills):');
+    final billNumbers = bills.map((b) => b.billNumber).toList();
+    billNumbers.sort(); // Sort bill numbers
+    for (int i = 0; i < billNumbers.length; i += 5) {
+      final endIndex =
+          (i + 5 < billNumbers.length) ? i + 5 : billNumbers.length;
+      notes.writeln(billNumbers.sublist(i, endIndex).join(', '));
+    }
+    notes.writeln('');
+
+    // Sales summary by payment type
+    notes.writeln('PAYMENT TYPE BREAKDOWN:');
+    final cashBills =
+        bills.where((b) => b.paymentType.toLowerCase() == 'cash').length;
+    final creditBills =
+        bills.where((b) => b.paymentType.toLowerCase() == 'credit').length;
+    final chequeBills =
+        bills.where((b) => b.paymentType.toLowerCase() == 'cheque').length;
+    notes.writeln('Cash: $cashBills bills');
+    notes.writeln('Credit: $creditBills bills');
+    notes.writeln('Cheque: $chequeBills bills');
+    notes.writeln('');
+
+    // Item-wise summary
+    notes.writeln('PRODUCT SALES SUMMARY:');
+    itemsSold.forEach((productCode, data) {
+      final remaining = remainingStock[productCode];
+      notes.writeln('${data['productName']}:');
+      notes.writeln(
+        '  Sold: ${data['quantitySold']} bags (Rs.${data['totalValue'].toStringAsFixed(2)})',
+      );
+      if (remaining != null) {
+        notes.writeln('  Remaining: ${remaining['remainingQuantity']} bags');
+        notes.writeln(
+          '  Sales %: ${remaining['salesPercentage'].toStringAsFixed(1)}%',
+        );
+      }
+      notes.writeln(
+        '  Bills: ${(data['billNumbers'] as List<String>).join(', ')}',
+      );
+      notes.writeln('');
+    });
+
+    return notes.toString();
+  }
+
+  /// Upload enhanced unloading summary to Firebase
   static Future<Map<String, dynamic>> _uploadUnloadingSummary({
     required UserSession session,
     required UnloadingSummary summary,
   }) async {
     try {
-      print('Uploading unloading summary to Firebase...');
+      print('Uploading enhanced unloading summary to Firebase...');
 
       final unloadingRef =
           _firestore
@@ -227,13 +398,19 @@ class UnloadingService {
       summaryData['createdAt'] = FieldValue.serverTimestamp();
       summaryData['updatedAt'] = FieldValue.serverTimestamp();
 
+      // Add enhanced tracking data
+      summaryData['uploadType'] = 'enhanced_with_bill_numbers';
+      summaryData['dataVersion'] = '2.0';
+
       await unloadingRef.set(summaryData);
 
-      print('Unloading summary uploaded successfully: ${unloadingRef.id}');
+      print(
+        'Enhanced unloading summary uploaded successfully: ${unloadingRef.id}',
+      );
 
       return {'success': true, 'unloadingId': unloadingRef.id};
     } catch (e) {
-      print('Error uploading unloading summary: $e');
+      print('Error uploading enhanced unloading summary: $e');
       return {'success': false, 'error': e.toString()};
     }
   }
@@ -254,7 +431,7 @@ class UnloadingService {
         // Get bill items
         final billItems = await _getBillItems(session, bill.id);
 
-        // FIXED: Use _saveBillToFirebase directly instead of non-existent method
+        // Save bill to Firebase
         await _saveBillToFirebase(bill, billItems, session);
 
         uploadedCount++;
@@ -274,7 +451,7 @@ class UnloadingService {
     };
   }
 
-  /// ADDED: Direct Firebase bill upload method
+  /// Save bill to Firebase with enhanced metadata
   static Future<void> _saveBillToFirebase(
     Bill bill,
     List<BillItem> billItems,
@@ -311,8 +488,13 @@ class UnloadingService {
         'createdBy': session.employeeId,
         'salesRepName': bill.salesRepName,
         'salesRepPhone': bill.salesRepPhone,
+        'uploadedAt': FieldValue.serverTimestamp(),
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
+        // Enhanced metadata
+        'itemCount': billItems.length,
+        'totalQuantity': billItems.fold(0, (sum, item) => sum + item.quantity),
+        'uploadType': 'enhanced_unloading',
       });
 
       // Add bill items as subcollection
@@ -327,18 +509,19 @@ class UnloadingService {
           'quantity': item.quantity,
           'unitPrice': item.unitPrice,
           'totalPrice': item.totalPrice,
+          'createdAt': FieldValue.serverTimestamp(),
         });
       }
 
       await batch.commit();
-      print('Bill saved to Firebase successfully: ${bill.billNumber}');
+      print('Enhanced bill saved to Firebase successfully: ${bill.billNumber}');
     } catch (e) {
-      print('Error saving bill to Firebase: $e');
+      print('Error saving enhanced bill to Firebase: $e');
       rethrow;
     }
   }
 
-  /// FIXED: Get bills for specific date from local database
+  /// Get bills for specific date from local database
   static Future<List<Bill>> _getBillsForDate(
     UserSession session,
     DateTime date,
@@ -351,7 +534,6 @@ class UnloadingService {
         date,
       );
 
-      // FIXED: Convert Map<String, dynamic> to Bill objects
       return billsData.map((data) => Bill.fromSQLite(data)).toList();
     } catch (e) {
       print('Error getting bills for date: $e');
@@ -426,7 +608,7 @@ class UnloadingService {
     }
   }
 
-  /// FIXED: Get pending upload data (data not yet uploaded)
+  /// Get pending upload data with enhanced details
   static Future<Map<String, dynamic>> getPendingUploadData(
     UserSession session,
   ) async {
@@ -437,12 +619,32 @@ class UnloadingService {
         session.businessId,
       );
 
-      // FIXED: Convert to Bill objects and calculate total
       final pendingBills =
           pendingBillsData.map((data) => Bill.fromSQLite(data)).toList();
 
       // Get today's loading
       final loading = await LoadingService.getTodaysLoading(session);
+
+      // Calculate enhanced pending data
+      double totalCash = 0.0;
+      double totalCredit = 0.0;
+      double totalCheque = 0.0;
+      final billNumbers = <String>[];
+
+      for (final bill in pendingBills) {
+        billNumbers.add(bill.billNumber);
+        switch (bill.paymentType.toLowerCase()) {
+          case 'cash':
+            totalCash += bill.totalAmount;
+            break;
+          case 'credit':
+            totalCredit += bill.totalAmount;
+            break;
+          case 'cheque':
+            totalCheque += bill.totalAmount;
+            break;
+        }
+      }
 
       return {
         'hasPendingData': pendingBills.isNotEmpty,
@@ -451,23 +653,30 @@ class UnloadingService {
         'loadingId': loading?.loadingId,
         'totalPendingValue': pendingBills.fold(
           0.0,
-          (sum, bill) =>
-              sum +
-              bill.totalAmount, // FIXED: Now accessing Bill object property
+          (sum, bill) => sum + bill.totalAmount,
         ),
+        'totalCash': totalCash,
+        'totalCredit': totalCredit,
+        'totalCheque': totalCheque,
+        'billNumbers': billNumbers,
+        'routeName': loading?.todayRoute?.name,
       };
     } catch (e) {
-      print('Error getting pending upload data: $e');
+      print('Error getting enhanced pending upload data: $e');
       return {
         'hasPendingData': false,
         'pendingBillsCount': 0,
         'hasLoading': false,
         'totalPendingValue': 0.0,
+        'totalCash': 0.0,
+        'totalCredit': 0.0,
+        'totalCheque': 0.0,
+        'billNumbers': <String>[],
       };
     }
   }
 
-  /// Validate data before upload
+  /// Validate data before upload with enhanced checks including one-per-day rule
   static Future<Map<String, dynamic>> validateBeforeUpload(
     UserSession session,
   ) async {
@@ -477,6 +686,24 @@ class UnloadingService {
         'errors': <String>[],
         'warnings': <String>[],
       };
+
+      final today = DateTime.now();
+
+      // NEW: Check if unloading already exists for today
+      final existingUnloading = await _dbService.getUnloadingSummaryByDate(
+        session.ownerId,
+        session.businessId,
+        session.employeeId,
+        today,
+      );
+
+      if (existingUnloading != null) {
+        validation['isValid'] = false;
+        validation['errors'].add(
+          'Unloading already completed for ${today.toLocal().toString().split(' ')[0]}. Only one unloading per sales rep per day is allowed.',
+        );
+        return validation;
+      }
 
       // Check if there's loading data
       final loading = await LoadingService.getTodaysLoading(session);
@@ -489,7 +716,13 @@ class UnloadingService {
       // Check if there are bills to upload
       final pendingData = await getPendingUploadData(session);
       if (!pendingData['hasPendingData']) {
-        validation['warnings'].add('No bills found to upload');
+        validation['isValid'] = false;
+        validation['errors'].add(
+          'No bills found to upload. Create at least one bill before unloading.',
+        );
+      } else {
+        final billCount = pendingData['pendingBillsCount'] as int;
+        validation['warnings'].add('Ready to upload $billCount bills');
       }
 
       // Check connectivity
@@ -503,12 +736,89 @@ class UnloadingService {
         validation['errors'].add('No internet connection available');
       }
 
+      // Add helpful information
+      if (validation['isValid']) {
+        validation['warnings'].add(
+          'All validations passed. Ready for unloading.',
+        );
+        validation['warnings'].add(
+          'Route: ${loading.todayRoute?.name ?? 'Unknown'}',
+        );
+      }
+
       return validation;
     } catch (e) {
       return {
         'isValid': false,
         'errors': ['Validation failed: $e'],
         'warnings': <String>[],
+      };
+    }
+  }
+
+  /// Check if unloading already exists for a specific date
+  static Future<bool> hasUnloadingForDate(
+    UserSession session,
+    DateTime date,
+  ) async {
+    try {
+      final existingUnloading = await _dbService.getUnloadingSummaryByDate(
+        session.ownerId,
+        session.businessId,
+        session.employeeId,
+        date,
+      );
+      return existingUnloading != null;
+    } catch (e) {
+      print('Error checking existing unloading: $e');
+      return false;
+    }
+  }
+
+  /// Get unloading status for today
+  static Future<Map<String, dynamic>> getTodaysUnloadingStatus(
+    UserSession session,
+  ) async {
+    try {
+      final today = DateTime.now();
+      final existingUnloading = await _dbService.getUnloadingSummaryByDate(
+        session.ownerId,
+        session.businessId,
+        session.employeeId,
+        today,
+      );
+
+      if (existingUnloading != null) {
+        return {
+          'hasUnloading': true,
+          'unloadingId': existingUnloading.id,
+          'billCount': existingUnloading.totalBillCount,
+          'totalValue': existingUnloading.totalSalesValue,
+          'unloadingDate': existingUnloading.unloadingDate.toIso8601String(),
+          'status': existingUnloading.status,
+          'billNumbers': existingUnloading.billNumbers,
+          'message':
+              'Unloading completed for ${today.toLocal().toString().split(' ')[0]}',
+        };
+      } else {
+        final pendingData = await getPendingUploadData(session);
+        return {
+          'hasUnloading': false,
+          'pendingBills': pendingData['pendingBillsCount'],
+          'pendingValue': pendingData['totalPendingValue'],
+          'canUnload':
+              pendingData['hasPendingData'] && pendingData['hasLoading'],
+          'message':
+              pendingData['hasPendingData']
+                  ? 'Ready to create unloading with ${pendingData['pendingBillsCount']} bills'
+                  : 'No bills available for unloading',
+        };
+      }
+    } catch (e) {
+      return {
+        'hasUnloading': false,
+        'error': e.toString(),
+        'message': 'Error checking unloading status',
       };
     }
   }

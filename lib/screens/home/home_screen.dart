@@ -1,4 +1,4 @@
-// lib/screens/home/home_screen.dart
+// lib/screens/home/home_screen.dart (UPDATED with One-Unloading-Per-Day Support)
 import 'package:flutter/material.dart';
 import 'package:lumorabiz_billing/addOutlet.dart';
 import 'package:provider/provider.dart';
@@ -24,6 +24,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   bool _isConnected = false;
   bool _isUploading = false;
   Map<String, dynamic>? _pendingUploadData;
+  Map<String, dynamic>? _unloadingStatus; // NEW: Track unloading status
 
   @override
   void initState() {
@@ -40,7 +41,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _checkConnectivity();
     _startTimer();
     _loadTodaysData();
-    _checkPendingUploadData();
+    _checkUnloadingStatus(); // NEW: Check today's unloading status
   }
 
   void _startTimer() {
@@ -85,11 +86,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     });
   }
 
-  // Check for pending upload data using comprehensive unloading service
-  void _checkPendingUploadData() async {
+  // NEW: Check today's unloading status
+  void _checkUnloadingStatus() async {
     final authProvider = context.read<AuthProvider>();
     if (authProvider.currentSession != null) {
       try {
+        final unloadingStatus = await UnloadingService.getTodaysUnloadingStatus(
+          authProvider.currentSession!,
+        );
+        setState(() {
+          _unloadingStatus = unloadingStatus;
+        });
+
+        // Also check pending upload data
         final pendingData = await UnloadingService.getPendingUploadData(
           authProvider.currentSession!,
         );
@@ -97,7 +106,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           _pendingUploadData = pendingData;
         });
       } catch (e) {
-        print('Error checking pending upload data: $e');
+        print('Error checking unloading status: $e');
       }
     }
   }
@@ -184,12 +193,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final authProvider = context.read<AuthProvider>();
     if (authProvider.currentSession != null) {
       loadingProvider.refreshLoading(authProvider.currentSession!);
-      // Refresh pending upload data after getting new data
-      _checkPendingUploadData();
+      // Refresh unloading status after getting new data
+      _checkUnloadingStatus();
     }
   }
 
-  // Comprehensive upload data method using your UnloadingService
+  // ENHANCED: Upload data method with one-per-day validation
   void _uploadData() async {
     if (!_isConnected) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -212,7 +221,24 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       return;
     }
 
-    // Validate before upload using your comprehensive service
+    // NEW: Check if unloading already exists for today
+    if (_unloadingStatus != null && _unloadingStatus!['hasUnloading'] == true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Unloading already completed for today!\n'
+            'Bill Count: ${_unloadingStatus!['billCount']}\n'
+            'Total Value: Rs.${_unloadingStatus!['totalValue'].toStringAsFixed(2)}',
+          ),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+      _showUnloadingAlreadyExistsDialog();
+      return;
+    }
+
+    // Validate before upload using enhanced validation
     final validation = await UnloadingService.validateBeforeUpload(
       authProvider.currentSession!,
     );
@@ -234,8 +260,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (warnings.isNotEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Warning: ${warnings.join(', ')}'),
-          backgroundColor: Colors.orange,
+          content: Text('Info: ${warnings.join(', ')}'),
+          backgroundColor: Colors.blue,
           duration: const Duration(seconds: 3),
         ),
       );
@@ -247,13 +273,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       // Show uploading message
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Uploading day data to server...'),
+          content: Text('Creating daily unloading summary...'),
           backgroundColor: Colors.blue,
           duration: Duration(seconds: 2),
         ),
       );
 
-      // Use your comprehensive uploadDayData method
+      // Use enhanced uploadDayData method with one-per-day enforcement
       final result = await UnloadingService.uploadDayData(
         session: authProvider.currentSession!,
       );
@@ -268,27 +294,27 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                'Upload successful!\n'
+                'Unloading successful!\n'
                 '$uploadedBills bills uploaded\n'
                 'Total value: Rs.${totalValue.toStringAsFixed(2)}\n'
-                'Unloading summary created',
+                'Date: ${details['uploadDate']}',
               ),
               backgroundColor: Colors.green,
               duration: const Duration(seconds: 5),
             ),
           );
 
-          // Refresh pending data
-          _checkPendingUploadData();
+          // Refresh unloading status
+          _checkUnloadingStatus();
 
           // Show detailed success dialog
-          _showUploadSuccessDialog(result);
+          _showUnloadingSuccessDialog(result);
         } else {
           // Handle errors
           final errors = result['errors'] as List<String>;
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Upload failed:\n${errors.join('\n')}'),
+              content: Text('Unloading failed:\n${errors.join('\n')}'),
               backgroundColor: Colors.red,
               duration: const Duration(seconds: 5),
             ),
@@ -299,7 +325,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Upload error: $e'),
+            content: Text('Unloading error: $e'),
             backgroundColor: Colors.red,
             duration: const Duration(seconds: 4),
           ),
@@ -312,10 +338,60 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
-  // Show detailed upload success dialog
-  void _showUploadSuccessDialog(Map<String, dynamic> result) {
+  // NEW: Show dialog when unloading already exists
+  void _showUnloadingAlreadyExistsDialog() {
+    if (_unloadingStatus == null) return;
+
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: Row(
+              children: [
+                Icon(Icons.info, color: Colors.orange, size: 28),
+                const SizedBox(width: 8),
+                const Text('Unloading Completed'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Today\'s unloading has already been completed.'),
+                const SizedBox(height: 12),
+                Text(
+                  '📅 Date: ${DateTime.now().toLocal().toString().split(' ')[0]}',
+                ),
+                Text('📊 Bills: ${_unloadingStatus!['billCount']} bills'),
+                Text(
+                  '💰 Total: Rs.${_unloadingStatus!['totalValue'].toStringAsFixed(2)}',
+                ),
+                Text('📋 Status: ${_unloadingStatus!['status']}'),
+                const SizedBox(height: 12),
+                const Text(
+                  'Only one unloading per sales rep per day is allowed.',
+                  style: TextStyle(
+                    fontStyle: FontStyle.italic,
+                    color: Colors.grey,
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+    );
+  }
+
+  // ENHANCED: Show detailed upload success dialog
+  void _showUnloadingSuccessDialog(Map<String, dynamic> result) {
     final details = result['details'] as Map<String, dynamic>;
     final uploadedBills = result['uploadedBills'] as int;
+    final billNumbers = details['billNumbers'] as List<String>;
 
     showDialog(
       context: context,
@@ -325,31 +401,52 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               children: [
                 Icon(Icons.check_circle, color: Colors.green, size: 28),
                 const SizedBox(width: 8),
-                const Text('Upload Complete'),
+                const Text('Unloading Complete'),
               ],
             ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('✓ $uploadedBills bills uploaded'),
-                Text(
-                  '✓ Total Sales: Rs.${details['totalValue'].toStringAsFixed(2)}',
-                ),
-                Text(
-                  '✓ Cash: Rs.${details['totalCash']?.toStringAsFixed(2) ?? '0.00'}',
-                ),
-                Text(
-                  '✓ Credit: Rs.${details['totalCredit']?.toStringAsFixed(2) ?? '0.00'}',
-                ),
-                Text(
-                  '✓ Cheque: Rs.${details['totalCheque']?.toStringAsFixed(2) ?? '0.00'}',
-                ),
-                const SizedBox(height: 8),
-                const Text('✓ Unloading summary created'),
-                const Text('✓ Stock quantities updated'),
-                const Text('✓ All data synchronized'),
-              ],
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('✓ $uploadedBills bills uploaded'),
+                  Text('✓ Date: ${details['uploadDate']}'),
+                  Text('✓ Sales Rep: ${details['salesRep']}'),
+                  const SizedBox(height: 8),
+                  Text(
+                    '💰 Total Sales: Rs.${details['totalValue'].toStringAsFixed(2)}',
+                  ),
+                  Text(
+                    '💵 Cash: Rs.${details['totalCash']?.toStringAsFixed(2) ?? '0.00'}',
+                  ),
+                  Text(
+                    '💳 Credit: Rs.${details['totalCredit']?.toStringAsFixed(2) ?? '0.00'}',
+                  ),
+                  Text(
+                    '🏦 Cheque: Rs.${details['totalCheque']?.toStringAsFixed(2) ?? '0.00'}',
+                  ),
+                  const SizedBox(height: 12),
+                  Text('📋 Bill Numbers (${billNumbers.length}):'),
+                  Container(
+                    height: 100,
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: SingleChildScrollView(
+                      child: Text(
+                        billNumbers.join(', '),
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text('✓ Unloading summary created'),
+                  const Text('✓ Stock quantities updated'),
+                  const Text('✓ All data synchronized'),
+                ],
+              ),
             ),
             actions: [
               TextButton(
@@ -401,7 +498,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
           if (authProvider.currentSession != null) {
             await loadingProvider.refreshLoading(authProvider.currentSession!);
-            _checkPendingUploadData(); // Refresh upload data too
+            _checkUnloadingStatus(); // Refresh unloading status too
           }
         },
         child: SingleChildScrollView(
@@ -416,8 +513,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 _buildInfoSection(),
                 const SizedBox(height: 24),
 
-                // Pending Upload Alert
-                _buildPendingUploadAlert(),
+                // ENHANCED: Unloading Status Alert
+                _buildUnloadingStatusAlert(),
 
                 // Today's Prices Section
                 _buildTodaysPricesSection(),
@@ -438,95 +535,154 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  // Enhanced pending upload alert widget
-  Widget _buildPendingUploadAlert() {
-    if (_pendingUploadData == null || !_pendingUploadData!['hasPendingData']) {
+  // ENHANCED: Unloading status alert widget
+  Widget _buildUnloadingStatusAlert() {
+    if (_unloadingStatus == null) {
       return const SizedBox.shrink();
     }
 
-    final billsCount = _pendingUploadData!['pendingBillsCount'] as int;
-    final totalValue = _pendingUploadData!['totalPendingValue'] as double;
-    final hasLoading = _pendingUploadData!['hasLoading'] as bool? ?? false;
+    final hasUnloading = _unloadingStatus!['hasUnloading'] as bool;
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 24),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.orange[50],
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.orange[200]!),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    if (hasUnloading) {
+      // Show completed unloading status
+      final billCount = _unloadingStatus!['billCount'] as int;
+      final totalValue = _unloadingStatus!['totalValue'] as double;
+
+      return Container(
+        margin: const EdgeInsets.only(bottom: 24),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.green[50],
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.green[200]!),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.green[700], size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  'Today\'s Unloading Completed',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: Colors.green[700],
+                    fontSize: 16,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '$billCount bills processed worth Rs.${totalValue.toStringAsFixed(2)}',
+              style: TextStyle(color: Colors.green[700]),
+            ),
+            Text(
+              'Date: ${DateTime.now().toLocal().toString().split(' ')[0]}',
+              style: TextStyle(color: Colors.green[600], fontSize: 12),
+            ),
+          ],
+        ),
+      );
+    } else {
+      // Show pending upload alert (if there are bills to upload)
+      if (_pendingUploadData != null && _pendingUploadData!['hasPendingData']) {
+        final billsCount = _pendingUploadData!['pendingBillsCount'] as int;
+        final totalValue = _pendingUploadData!['totalPendingValue'] as double;
+        final hasLoading = _pendingUploadData!['hasLoading'] as bool? ?? false;
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 24),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.orange[50],
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.orange[200]!),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.upload_outlined, color: Colors.orange[700], size: 20),
-              const SizedBox(width: 8),
+              Row(
+                children: [
+                  Icon(
+                    Icons.upload_outlined,
+                    color: Colors.orange[700],
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Ready for Daily Unloading',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: Colors.orange[700],
+                      fontSize: 16,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
               Text(
-                'Ready to Upload',
-                style: TextStyle(
-                  fontWeight: FontWeight.w600,
-                  color: Colors.orange[700],
-                  fontSize: 16,
+                '$billsCount bills worth Rs.${totalValue.toStringAsFixed(2)} ready for unloading.',
+                style: TextStyle(color: Colors.orange[700]),
+              ),
+              if (!hasLoading) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Warning: No loading data found for today.',
+                  style: TextStyle(
+                    color: Colors.red[600],
+                    fontSize: 12,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed:
+                      _isConnected && !_isUploading && hasLoading
+                          ? _uploadData
+                          : null,
+                  icon:
+                      _isUploading
+                          ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Colors.white,
+                              ),
+                            ),
+                          )
+                          : const Icon(Icons.cloud_upload, size: 18),
+                  label: Text(
+                    _isUploading
+                        ? 'Creating Unloading...'
+                        : 'Create Daily Unloading',
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor:
+                        (_isConnected && hasLoading && !_isUploading)
+                            ? Colors.orange[600]
+                            : Colors.grey[400],
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Text(
-            '$billsCount bills worth Rs.${totalValue.toStringAsFixed(2)} ready for unloading.',
-            style: TextStyle(color: Colors.orange[700]),
-          ),
-          if (!hasLoading) ...[
-            const SizedBox(height: 4),
-            Text(
-              'Warning: No loading data found for today.',
-              style: TextStyle(
-                color: Colors.red[600],
-                fontSize: 12,
-                fontStyle: FontStyle.italic,
-              ),
-            ),
-          ],
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed:
-                  _isConnected && !_isUploading && hasLoading
-                      ? _uploadData
-                      : null,
-              icon:
-                  _isUploading
-                      ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            Colors.white,
-                          ),
-                        ),
-                      )
-                      : const Icon(Icons.cloud_upload, size: 18),
-              label: Text(_isUploading ? 'Uploading...' : 'Upload Day Data'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor:
-                    (_isConnected && hasLoading && !_isUploading)
-                        ? Colors.orange[600]
-                        : Colors.grey[400],
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
+        );
+      }
+    }
+
+    return const SizedBox.shrink();
   }
 
   Widget _buildInfoSection() {
@@ -747,7 +903,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           ),
                         )
                         : const Icon(Icons.upload, size: 18),
-                label: Text(_isUploading ? 'Uploading...' : 'Upload Data'),
+                label: Text(_isUploading ? 'Unloading...' : 'Unload Data'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor:
                       _isConnected && !_isUploading
