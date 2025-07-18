@@ -479,13 +479,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           // Profile Button
           IconButton(
             onPressed: _showProfile,
-            icon: const Icon(Icons.person),
+            icon: const Icon(Icons.person, color: Colors.white54),
             tooltip: 'Profile',
           ),
           // Logout Button
           IconButton(
             onPressed: _logout,
-            icon: const Icon(Icons.logout),
+            icon: const Icon(Icons.logout, color: Colors.white54),
             tooltip: 'Logout',
           ),
           const SizedBox(width: 8),

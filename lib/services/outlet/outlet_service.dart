@@ -1,3 +1,4 @@
+// lib/services/outlet/outlet_service.dart (CORRECTED FOR FULL OFFLINE SUPPORT)
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -12,7 +13,8 @@ class OutletService {
   static final FirebaseStorage _storage = FirebaseStorage.instance;
   static final DatabaseService _dbService = DatabaseService();
 
-  /// Add new outlet (handles both online and offline)
+  /// Add new outlet (ENHANCED FOR FULL OFFLINE SUPPORT)
+  /// Works both online and offline with graceful fallback
   static Future<String> addOutlet({
     required UserSession session,
     required Map<String, dynamic> outletData,
@@ -25,23 +27,35 @@ class OutletService {
         'Adding outlet: ${outletData['outletName']} to route: $routeName ($routeId)',
       );
 
-      // Check connectivity
+      // Check connectivity (but don't depend on it failing)
       final connectivity = await Connectivity().checkConnectivity();
       final isOnline =
           connectivity.isNotEmpty &&
           connectivity.first != ConnectivityResult.none;
 
       if (isOnline) {
-        print('Adding outlet online to Firebase customers collection...');
-        return await _addOutletOnline(
-          session,
-          outletData,
-          imageBase64,
-          routeId,
-          routeName,
-        );
+        print('Device online - attempting Firebase save...');
+        try {
+          return await _addOutletOnline(
+            session,
+            outletData,
+            imageBase64,
+            routeId,
+            routeName,
+          );
+        } catch (e) {
+          print('Online save failed, falling back to offline: $e');
+          // ENHANCED: Graceful fallback to offline if online fails
+          return await _addOutletOffline(
+            session,
+            outletData,
+            imageBase64,
+            routeId,
+            routeName,
+          );
+        }
       } else {
-        print('Adding outlet offline to local storage...');
+        print('Device offline - saving locally...');
         return await _addOutletOffline(
           session,
           outletData,
@@ -122,7 +136,7 @@ class OutletService {
       await docRef.set(completeOutletData);
       print('Outlet saved to customers collection with route: $routeName');
 
-      // Also save to local database for offline access
+      // IMPORTANT: Also save to local database for offline access
       try {
         await _saveOutletToLocal(
           session,
@@ -132,20 +146,22 @@ class OutletService {
           imageBase64,
           routeId,
           routeName,
+          syncStatus: 'synced', // Mark as already synced
         );
         print('Outlet synced to local database');
       } catch (e) {
         print('Warning: Failed to sync outlet to local database: $e');
+        // Don't fail the whole operation if local save fails
       }
 
       return outletId;
     } catch (e) {
       print('Error adding outlet to customers collection: $e');
-      throw Exception('Failed to save outlet: ${e.toString()}');
+      throw Exception('Failed to save outlet online: ${e.toString()}');
     }
   }
 
-  /// Add outlet offline to local storage
+  /// Add outlet offline to local storage (FULLY FUNCTIONAL)
   static Future<String> _addOutletOffline(
     UserSession session,
     Map<String, dynamic> outletData,
@@ -154,20 +170,23 @@ class OutletService {
     String? routeName,
   ) async {
     try {
-      final outletId = 'outlet_${DateTime.now().millisecondsSinceEpoch}';
+      // Generate unique offline ID with timestamp and user info
+      final outletId =
+          'offline_${DateTime.now().millisecondsSinceEpoch}_${session.employeeId}';
       print('Creating offline outlet with ID: $outletId for route: $routeName');
 
       await _saveOutletToLocal(
         session,
         outletId,
         outletData,
-        null,
+        null, // No Firebase URL when offline
         imageBase64,
         routeId,
         routeName,
+        syncStatus: 'pending', // Mark as needing sync
       );
-      print('Outlet saved offline successfully');
 
+      print('Outlet saved offline successfully - will sync when online');
       return outletId;
     } catch (e) {
       print('Error adding outlet offline: $e');
@@ -175,7 +194,7 @@ class OutletService {
     }
   }
 
-  /// Save outlet to local database
+  /// Save outlet to local database (ENHANCED)
   static Future<void> _saveOutletToLocal(
     UserSession session,
     String outletId,
@@ -183,33 +202,34 @@ class OutletService {
     String? firebaseImageUrl,
     String? imageBase64,
     String? routeId,
-    String? routeName,
-  ) async {
+    String? routeName, {
+    String syncStatus = 'pending',
+  }) async {
     try {
       final localOutletData = {
         'id': outletId,
         'outlet_name': outletData['outletName'],
-        'address': outletData['address'],
-        'phone': outletData['phoneNumber'],
-        'latitude': outletData['latitude'],
-        'longitude': outletData['longitude'],
-        'owner_name': outletData['ownerName'],
-        'outlet_type': outletData['outletType'],
+        'address': outletData['address'] ?? '',
+        'phone': outletData['phoneNumber'] ?? '',
+        'latitude': outletData['latitude'] ?? 0.0,
+        'longitude': outletData['longitude'] ?? 0.0,
+        'owner_name': outletData['ownerName'] ?? '',
+        'outlet_type': outletData['outletType'] ?? 'general',
         'image_base64': imageBase64,
         'firebase_image_url': firebaseImageUrl,
         'owner_id': session.ownerId,
         'business_id': session.businessId,
         'created_by': session.employeeId,
-        // ADDED: Route information
         'route_id': routeId ?? '',
-        'route_name': routeName,
+        'route_name': routeName ?? '',
         'is_active': 1,
-        'sync_status': firebaseImageUrl != null ? 'synced' : 'pending',
+        'sync_status': syncStatus,
         'created_at': DateTime.now().millisecondsSinceEpoch,
         'updated_at': DateTime.now().millisecondsSinceEpoch,
       };
 
       await _dbService.insertOutlet(localOutletData);
+      print('Outlet saved to local database with sync_status: $syncStatus');
     } catch (e) {
       print('Error saving outlet to local database: $e');
       rethrow;
@@ -257,7 +277,8 @@ class OutletService {
     }
   }
 
-  /// Get all outlets for the business from customers collection
+  /// Get all outlets (OFFLINE-FIRST APPROACH)
+  /// Always works, even when completely offline
   static Future<List<Outlet>> getOutlets(
     UserSession session, {
     String? routeId,
@@ -265,39 +286,69 @@ class OutletService {
     bool? isActive,
   }) async {
     try {
-      print('Loading outlets for business: ${session.businessId}');
+      print(
+        'Loading outlets for business: ${session.businessId} (offline-first)',
+      );
       if (routeId != null) print('Filtering by route: $routeId');
       if (outletType != null) print('Filtering by type: $outletType');
 
+      // OFFLINE-FIRST: Always try local first
+      List<Outlet> outlets = [];
+      try {
+        outlets = await _getOutletsFromLocal(
+          session,
+          routeId: routeId,
+          outletType: outletType,
+          isActive: isActive,
+        );
+        print('Loaded ${outlets.length} outlets from local database');
+      } catch (localError) {
+        print('Error loading from local database: $localError');
+        // Continue to try online if local fails
+      }
+
+      // Try to sync with online if connected (but don't block)
       final connectivity = await Connectivity().checkConnectivity();
       final isOnline =
           connectivity.isNotEmpty &&
           connectivity.first != ConnectivityResult.none;
 
       if (isOnline) {
-        return await _getOutletsFromFirebase(
-          session,
-          routeId: routeId,
-          outletType: outletType,
-          isActive: isActive,
-        );
+        print('Device online - attempting background sync...');
+        try {
+          final onlineOutlets = await _getOutletsFromFirebase(
+            session,
+            routeId: routeId,
+            outletType: outletType,
+            isActive: isActive,
+          );
+
+          // Sync to local database
+          await _syncOutletsToLocal(onlineOutlets);
+          print('Background sync completed');
+
+          // If online data is newer/different, use it
+          if (onlineOutlets.isNotEmpty) {
+            outlets = onlineOutlets;
+          }
+        } catch (onlineError) {
+          print('Online sync failed (non-critical): $onlineError');
+          // Continue with local data - don't fail the whole operation
+        }
       } else {
-        return await _getOutletsFromLocal(
-          session,
-          routeId: routeId,
-          outletType: outletType,
-          isActive: isActive,
-        );
+        print('Device offline - using local data only');
       }
+
+      return outlets;
     } catch (e) {
-      print('Error loading outlets: $e');
-      // Fallback to local data
-      return await _getOutletsFromLocal(
-        session,
-        routeId: routeId,
-        outletType: outletType,
-        isActive: isActive,
-      );
+      print('Error in getOutlets: $e');
+      // Last resort - try local only
+      try {
+        return await _getOutletsFromLocal(session);
+      } catch (fallbackError) {
+        print('Even fallback failed: $fallbackError');
+        return []; // Return empty list rather than crash
+      }
     }
   }
 
@@ -311,7 +362,6 @@ class OutletService {
     try {
       print('Fetching outlets from Firebase customers collection...');
 
-      // Build query with filters
       Query<Map<String, dynamic>> query = _firestore
           .collection('owners')
           .doc(session.ownerId)
@@ -320,14 +370,10 @@ class OutletService {
           .collection('customers')
           .where('customerType', isEqualTo: 'outlet');
 
-      // Apply filters
       if (isActive != null) {
         query = query.where('isActive', isEqualTo: isActive);
       } else {
-        query = query.where(
-          'isActive',
-          isEqualTo: true,
-        ); // Default to active only
+        query = query.where('isActive', isEqualTo: true);
       }
 
       if (routeId != null && routeId.isNotEmpty) {
@@ -338,39 +384,31 @@ class OutletService {
         query = query.where('outletType', isEqualTo: outletType);
       }
 
-      // Order by outlet name
       query = query.orderBy('outletName');
 
       final QuerySnapshot snapshot = await query.get();
-
       final outlets =
           snapshot.docs.map((doc) {
             final data = doc.data() as Map<String, dynamic>;
             return Outlet.fromFirestore(data, doc.id);
           }).toList();
 
-      print('Found ${outlets.length} outlets from customers collection');
+      print(
+        'Found ${outlets.length} outlets from Firebase customers collection',
+      );
       if (routeId != null) {
         final routeOutlets = outlets.where((o) => o.routeId == routeId).length;
         print('  - $routeOutlets outlets belong to route: $routeId');
       }
 
-      // Sync to local database
-      try {
-        await _syncOutletsToLocal(outlets);
-        print('Outlets synced to local database');
-      } catch (e) {
-        print('Warning: Failed to sync outlets to local: $e');
-      }
-
       return outlets;
     } catch (e) {
-      print('Error getting outlets from customers collection: $e');
+      print('Error getting outlets from Firebase customers collection: $e');
       throw e;
     }
   }
 
-  /// Get outlets from local database
+  /// Get outlets from local database (ALWAYS WORKS OFFLINE)
   static Future<List<Outlet>> _getOutletsFromLocal(
     UserSession session, {
     String? routeId,
@@ -380,7 +418,6 @@ class OutletService {
     try {
       print('Loading outlets from local database...');
 
-      // Build WHERE clause with filters
       String whereClause = 'owner_id = ? AND business_id = ?';
       List<dynamic> whereArgs = [session.ownerId, session.businessId];
 
@@ -388,7 +425,7 @@ class OutletService {
         whereClause += ' AND is_active = ?';
         whereArgs.add(isActive ? 1 : 0);
       } else {
-        whereClause += ' AND is_active = 1'; // Default to active only
+        whereClause += ' AND is_active = 1';
       }
 
       if (routeId != null && routeId.isNotEmpty) {
@@ -416,7 +453,7 @@ class OutletService {
       return outlets;
     } catch (e) {
       print('Error getting outlets from local database: $e');
-      return [];
+      return []; // Return empty list instead of throwing
     }
   }
 
@@ -425,61 +462,67 @@ class OutletService {
     try {
       for (final outlet in outlets) {
         final outletData = outlet.toSQLite();
+        // Mark Firebase outlets as synced
+        outletData['sync_status'] = 'synced';
         await _dbService.insertOutlet(outletData);
       }
+      print('Synced ${outlets.length} outlets to local database');
     } catch (e) {
       print('Error syncing outlets to local: $e');
     }
   }
 
-  /// Get specific outlet by ID from customers collection
+  /// Get specific outlet by ID (OFFLINE CAPABLE)
   static Future<Outlet?> getOutletById({
     required UserSession session,
     required String outletId,
   }) async {
     try {
+      // Try local first
+      final db = await _dbService.database;
+      final List<Map<String, dynamic>> maps = await db.query(
+        'outlets',
+        where: 'id = ?',
+        whereArgs: [outletId],
+        limit: 1,
+      );
+
+      if (maps.isNotEmpty) {
+        return Outlet.fromSQLite(maps.first);
+      }
+
+      // If not found locally and online, try Firebase
       final connectivity = await Connectivity().checkConnectivity();
       final isOnline =
           connectivity.isNotEmpty &&
           connectivity.first != ConnectivityResult.none;
 
       if (isOnline) {
-        // Get from Firebase customers collection
-        final DocumentSnapshot doc =
-            await _firestore
-                .collection('owners')
-                .doc(session.ownerId)
-                .collection('businesses')
-                .doc(session.businessId)
-                .collection('customers')
-                .doc(outletId)
-                .get();
+        try {
+          final DocumentSnapshot doc =
+              await _firestore
+                  .collection('owners')
+                  .doc(session.ownerId)
+                  .collection('businesses')
+                  .doc(session.businessId)
+                  .collection('customers')
+                  .doc(outletId)
+                  .get();
 
-        if (doc.exists) {
-          final data = doc.data() as Map<String, dynamic>;
-          // Verify it's an outlet customer
-          if (data['customerType'] == 'outlet') {
-            return Outlet.fromFirestore(data, doc.id);
+          if (doc.exists) {
+            final data = doc.data() as Map<String, dynamic>;
+            if (data['customerType'] == 'outlet') {
+              return Outlet.fromFirestore(data, doc.id);
+            }
           }
-        }
-      } else {
-        // Get from local database
-        final db = await _dbService.database;
-        final List<Map<String, dynamic>> maps = await db.query(
-          'outlets',
-          where: 'id = ?',
-          whereArgs: [outletId],
-          limit: 1,
-        );
-
-        if (maps.isNotEmpty) {
-          return Outlet.fromSQLite(maps.first);
+        } catch (e) {
+          print('Error getting outlet from Firebase: $e');
         }
       }
 
       return null;
     } catch (e) {
-      print('Error getting outlet by ID from customers collection: $e');
+      print('Error getting outlet by ID: $e');
       return null;
     }
   }
@@ -492,75 +535,98 @@ class OutletService {
     return await getOutlets(session, routeId: routeId);
   }
 
-  /// Get all available routes (distinct route IDs and names)
+  /// Get all available routes (OFFLINE CAPABLE)
   static Future<List<Map<String, String>>> getAvailableRoutes(
     UserSession session,
   ) async {
     try {
+      // Try local first
+      final db = await _dbService.database;
+      final result = await db.rawQuery(
+        '''
+        SELECT DISTINCT route_id, route_name 
+        FROM outlets 
+        WHERE owner_id = ? AND business_id = ? AND is_active = 1 AND route_id != ''
+        ORDER BY route_name
+      ''',
+        [session.ownerId, session.businessId],
+      );
+
+      final localRoutes =
+          result
+              .map(
+                (row) => {
+                  'routeId': row['route_id'] as String,
+                  'routeName':
+                      (row['route_name'] as String?) ??
+                      'Route ${row['route_id']}',
+                },
+              )
+              .toList();
+
+      // If online, also try to get from Firebase
       final connectivity = await Connectivity().checkConnectivity();
       final isOnline =
           connectivity.isNotEmpty &&
           connectivity.first != ConnectivityResult.none;
 
       if (isOnline) {
-        // Get from Firebase
-        final snapshot =
-            await _firestore
-                .collection('owners')
-                .doc(session.ownerId)
-                .collection('businesses')
-                .doc(session.businessId)
-                .collection('customers')
-                .where('customerType', isEqualTo: 'outlet')
-                .where('isActive', isEqualTo: true)
-                .get();
+        try {
+          final snapshot =
+              await _firestore
+                  .collection('owners')
+                  .doc(session.ownerId)
+                  .collection('businesses')
+                  .doc(session.businessId)
+                  .collection('customers')
+                  .where('customerType', isEqualTo: 'outlet')
+                  .where('isActive', isEqualTo: true)
+                  .get();
 
-        final routes = <String, String>{};
-        for (final doc in snapshot.docs) {
-          final data = doc.data();
-          final routeId = data['routeId'] as String?;
-          final routeName = data['routeName'] as String?;
+          final firebaseRoutes = <String, String>{};
+          for (final doc in snapshot.docs) {
+            final data = doc.data();
+            final routeId = data['routeId'] as String?;
+            final routeName = data['routeName'] as String?;
 
-          if (routeId != null && routeId.isNotEmpty) {
-            routes[routeId] = routeName ?? 'Route $routeId';
+            if (routeId != null && routeId.isNotEmpty) {
+              firebaseRoutes[routeId] = routeName ?? 'Route $routeId';
+            }
           }
+
+          final onlineRoutes =
+              firebaseRoutes.entries
+                  .map((e) => {'routeId': e.key, 'routeName': e.value})
+                  .toList();
+
+          // Merge and return unique routes (prefer online data)
+          final allRoutes = <String, String>{};
+          for (final route in localRoutes) {
+            allRoutes[route['routeId']!] = route['routeName']!;
+          }
+          for (final route in onlineRoutes) {
+            allRoutes[route['routeId']!] = route['routeName']!;
+          }
+
+          return allRoutes.entries
+              .map((e) => {'routeId': e.key, 'routeName': e.value})
+              .toList();
+        } catch (e) {
+          print('Error getting routes from Firebase (using local): $e');
         }
-
-        return routes.entries
-            .map((e) => {'routeId': e.key, 'routeName': e.value})
-            .toList();
-      } else {
-        // Get from local database
-        final db = await _dbService.database;
-        final result = await db.rawQuery(
-          '''
-          SELECT DISTINCT route_id, route_name 
-          FROM outlets 
-          WHERE owner_id = ? AND business_id = ? AND is_active = 1 AND route_id != ''
-          ORDER BY route_name
-        ''',
-          [session.ownerId, session.businessId],
-        );
-
-        return result
-            .map(
-              (row) => {
-                'routeId': row['route_id'] as String,
-                'routeName':
-                    (row['route_name'] as String?) ??
-                    'Route ${row['route_id']}',
-              },
-            )
-            .toList();
       }
+
+      return localRoutes;
     } catch (e) {
       print('Error getting available routes: $e');
       return [];
     }
   }
 
-  /// Sync pending outlets to customers collection (for when app comes back online)
-  static Future<void> syncPendingOutlets(UserSession session) async {
+  /// Sync pending outlets to customers collection (ENHANCED)
+  static Future<Map<String, dynamic>> syncPendingOutlets(
+    UserSession session,
+  ) async {
     try {
       print('Syncing pending outlets to customers collection...');
 
@@ -571,9 +637,11 @@ class OutletService {
         whereArgs: [session.ownerId, session.businessId, 'pending'],
       );
 
-      print(
-        'Found ${pendingOutlets.length} pending outlets to sync to customers collection',
-      );
+      print('Found ${pendingOutlets.length} pending outlets to sync');
+
+      int successCount = 0;
+      int failCount = 0;
+      final List<String> errors = [];
 
       for (final outletData in pendingOutlets) {
         try {
@@ -587,13 +655,32 @@ class OutletService {
             whereArgs: [outletData['id']],
           );
 
+          successCount++;
           print('Synced outlet to customers: ${outletData['outlet_name']}');
         } catch (e) {
-          print('Failed to sync outlet ${outletData['id']} to customers: $e');
+          failCount++;
+          final error = 'Failed to sync ${outletData['outlet_name']}: $e';
+          errors.add(error);
+          print(error);
         }
       }
+
+      return {
+        'success': true,
+        'syncedCount': successCount,
+        'failedCount': failCount,
+        'totalPending': pendingOutlets.length,
+        'errors': errors,
+      };
     } catch (e) {
-      print('Error syncing pending outlets to customers collection: $e');
+      print('Error syncing pending outlets: $e');
+      return {
+        'success': false,
+        'error': e.toString(),
+        'syncedCount': 0,
+        'failedCount': 0,
+        'totalPending': 0,
+      };
     }
   }
 
@@ -602,26 +689,28 @@ class OutletService {
     UserSession session,
     Map<String, dynamic> outletData,
   ) async {
-    final docRef = _firestore
-        .collection('owners')
-        .doc(session.ownerId)
-        .collection('businesses')
-        .doc(session.businessId)
-        .collection('customers')
-        .doc(outletData['id']);
+    // Generate new Firebase ID for offline outlets
+    final docRef =
+        _firestore
+            .collection('owners')
+            .doc(session.ownerId)
+            .collection('businesses')
+            .doc(session.businessId)
+            .collection('customers')
+            .doc();
 
     // Upload image if exists
     String? imageUrl;
     if (outletData['image_base64'] != null) {
       imageUrl = await _uploadImageToStorage(
-        outletId: outletData['id'],
+        outletId: docRef.id,
         imageBase64: outletData['image_base64'],
         session: session,
       );
     }
 
     final firebaseData = {
-      'id': outletData['id'],
+      'id': docRef.id,
       'outletName': outletData['outlet_name'],
       'address': outletData['address'],
       'phoneNumber': outletData['phone'],
@@ -636,10 +725,11 @@ class OutletService {
       'businessId': session.businessId,
       'ownerId': session.ownerId,
       'createdBy': outletData['created_by'],
+      'routeId': outletData['route_id'] ?? '',
+      'routeName': outletData['route_name'],
       'createdAt': FieldValue.serverTimestamp(),
       'registeredDate': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
-      // Customer-specific fields
       'customerType': 'outlet',
       'status': 'active',
       'registeredBy': session.employeeId,
@@ -649,9 +739,22 @@ class OutletService {
     };
 
     await docRef.set(firebaseData);
+
+    // Update local database with new Firebase ID
+    final db = await _dbService.database;
+    await db.update(
+      'outlets',
+      {
+        'firebase_id': docRef.id,
+        'firebase_image_url': imageUrl,
+        'sync_status': 'synced',
+      },
+      where: 'id = ?',
+      whereArgs: [outletData['id']],
+    );
   }
 
-  /// Update outlet in customers collection
+  /// Update outlet (OFFLINE CAPABLE)
   static Future<void> updateOutlet({
     required UserSession session,
     required String outletId,
@@ -664,16 +767,45 @@ class OutletService {
           connectivity.first != ConnectivityResult.none;
 
       if (isOnline) {
-        await _firestore
-            .collection('owners')
-            .doc(session.ownerId)
-            .collection('businesses')
-            .doc(session.businessId)
-            .collection('customers')
-            .doc(outletId)
-            .update({...updates, 'updatedAt': FieldValue.serverTimestamp()});
+        try {
+          await _firestore
+              .collection('owners')
+              .doc(session.ownerId)
+              .collection('businesses')
+              .doc(session.businessId)
+              .collection('customers')
+              .doc(outletId)
+              .update({...updates, 'updatedAt': FieldValue.serverTimestamp()});
+
+          // Also update local
+          final db = await _dbService.database;
+          await db.update(
+            'outlets',
+            {
+              ...updates,
+              'updated_at': DateTime.now().millisecondsSinceEpoch,
+              'sync_status': 'synced',
+            },
+            where: 'id = ?',
+            whereArgs: [outletId],
+          );
+        } catch (e) {
+          print('Online update failed, saving offline: $e');
+          // Fallback to offline update
+          final db = await _dbService.database;
+          await db.update(
+            'outlets',
+            {
+              ...updates,
+              'updated_at': DateTime.now().millisecondsSinceEpoch,
+              'sync_status': 'pending',
+            },
+            where: 'id = ?',
+            whereArgs: [outletId],
+          );
+        }
       } else {
-        // Update local database
+        // Update local database only
         final db = await _dbService.database;
         await db.update(
           'outlets',
@@ -687,12 +819,12 @@ class OutletService {
         );
       }
     } catch (e) {
-      print('Error updating outlet in customers collection: $e');
+      print('Error updating outlet: $e');
       rethrow;
     }
   }
 
-  /// Delete outlet from customers collection
+  /// Delete outlet (OFFLINE CAPABLE)
   static Future<void> deleteOutlet({
     required UserSession session,
     required String outletId,
@@ -704,21 +836,50 @@ class OutletService {
           connectivity.first != ConnectivityResult.none;
 
       if (isOnline) {
-        // Soft delete - mark as inactive
-        await _firestore
-            .collection('owners')
-            .doc(session.ownerId)
-            .collection('businesses')
-            .doc(session.businessId)
-            .collection('customers')
-            .doc(outletId)
-            .update({
-              'isActive': false,
-              'deletedAt': FieldValue.serverTimestamp(),
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
+        try {
+          // Soft delete in Firebase
+          await _firestore
+              .collection('owners')
+              .doc(session.ownerId)
+              .collection('businesses')
+              .doc(session.businessId)
+              .collection('customers')
+              .doc(outletId)
+              .update({
+                'isActive': false,
+                'deletedAt': FieldValue.serverTimestamp(),
+                'updatedAt': FieldValue.serverTimestamp(),
+              });
+
+          // Also update local
+          final db = await _dbService.database;
+          await db.update(
+            'outlets',
+            {
+              'is_active': 0,
+              'updated_at': DateTime.now().millisecondsSinceEpoch,
+              'sync_status': 'synced',
+            },
+            where: 'id = ?',
+            whereArgs: [outletId],
+          );
+        } catch (e) {
+          print('Online delete failed, saving offline: $e');
+          // Fallback to offline delete
+          final db = await _dbService.database;
+          await db.update(
+            'outlets',
+            {
+              'is_active': 0,
+              'updated_at': DateTime.now().millisecondsSinceEpoch,
+              'sync_status': 'pending',
+            },
+            where: 'id = ?',
+            whereArgs: [outletId],
+          );
+        }
       } else {
-        // Update local database
+        // Update local database only
         final db = await _dbService.database;
         await db.update(
           'outlets',
@@ -732,8 +893,23 @@ class OutletService {
         );
       }
     } catch (e) {
-      print('Error deleting outlet from customers collection: $e');
+      print('Error deleting outlet: $e');
       rethrow;
+    }
+  }
+
+  /// Get offline outlet count
+  static Future<int> getOfflineOutletCount(UserSession session) async {
+    try {
+      final db = await _dbService.database;
+      final result = await db.rawQuery(
+        'SELECT COUNT(*) as count FROM outlets WHERE owner_id = ? AND business_id = ? AND sync_status = ?',
+        [session.ownerId, session.businessId, 'pending'],
+      );
+      return result.first['count'] as int? ?? 0;
+    } catch (e) {
+      print('Error getting offline outlet count: $e');
+      return 0;
     }
   }
 }

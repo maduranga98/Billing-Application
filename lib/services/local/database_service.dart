@@ -1,4 +1,4 @@
-// lib/services/local/database_service.dart (UPDATED with Enhanced Unloading Support)
+// lib/services/local/database_service.dart (CORRECTED - Fixed outlets table creation)
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
@@ -71,13 +71,16 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 5, // UPDATED: Version 5 for enhanced unloading support
+      version:
+          7, // FIXED: Incremented to version 7 to force bill_items table recreation
       onCreate: _createDatabase,
       onUpgrade: _upgradeDatabase,
     );
   }
 
   Future<void> _createDatabase(Database db, int version) async {
+    print('Creating new database with version $version');
+
     // User session table
     await db.execute('''
       CREATE TABLE user_session (
@@ -157,8 +160,8 @@ class DatabaseService {
       CREATE TABLE bill_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         bill_id TEXT NOT NULL,
-        product_id TEXT NOT NULL,
-        product_name TEXT NOT NULL,
+        item_id TEXT NOT NULL,
+        item_name TEXT NOT NULL,
         product_code TEXT NOT NULL,
         quantity INTEGER NOT NULL,
         unit_price REAL NOT NULL,
@@ -243,35 +246,9 @@ class DatabaseService {
       )
     ''');
 
-    // Create indexes
-    await db.execute(
-      'CREATE INDEX idx_user_session_active ON user_session(is_active)',
-    );
-    await db.execute(
-      'CREATE INDEX idx_loadings_sales_rep ON loadings(sales_rep_id, status)',
-    );
-    await db.execute('CREATE INDEX idx_bills_outlet ON bills(outlet_id)');
-    await db.execute('CREATE INDEX idx_bills_created_at ON bills(created_at)');
-    await db.execute(
-      'CREATE INDEX idx_bills_business ON bills(business_id, created_by)',
-    );
-    await db.execute('CREATE INDEX idx_bill_items_bill ON bill_items(bill_id)');
-    await db.execute(
-      'CREATE INDEX idx_outlets_business ON outlets(business_id, is_active)',
-    );
-    await db.execute(
-      'CREATE INDEX idx_sync_queue_status ON sync_queue(table_name, operation)',
-    );
-    await db.execute(
-      'CREATE INDEX idx_unloading_summaries_rep ON unloading_summaries(sales_rep_id, unloading_date)',
-    );
-    // NEW: Additional indexes for enhanced unloading
-    await db.execute(
-      'CREATE INDEX idx_unloading_summaries_date ON unloading_summaries(unloading_date DESC)',
-    );
-    await db.execute(
-      'CREATE INDEX idx_bills_sync_status ON bills(owner_id, business_id, sync_status)',
-    );
+    // Create all indexes
+    await _createAllIndexes(db);
+    print('Database creation completed successfully');
   }
 
   Future<void> _upgradeDatabase(
@@ -384,13 +361,13 @@ class DatabaseService {
       ''');
 
       await db.execute(
-        'CREATE INDEX idx_unloading_summaries_rep ON unloading_summaries(sales_rep_id, unloading_date)',
+        'CREATE INDEX IF NOT EXISTS idx_unloading_summaries_rep ON unloading_summaries(sales_rep_id, unloading_date)',
       );
 
       print('Created basic unloading_summaries table');
     }
 
-    // NEW: Enhanced unloading support (version 5)
+    // Enhanced unloading support (version 5)
     if (oldVersion < 5) {
       try {
         // Add enhanced columns to unloading_summaries table
@@ -423,10 +400,10 @@ class DatabaseService {
 
         // Add new indexes
         await db.execute(
-          'CREATE INDEX idx_unloading_summaries_date ON unloading_summaries(unloading_date DESC)',
+          'CREATE INDEX IF NOT EXISTS idx_unloading_summaries_date ON unloading_summaries(unloading_date DESC)',
         );
         await db.execute(
-          'CREATE INDEX idx_bills_sync_status ON bills(owner_id, business_id, sync_status)',
+          'CREATE INDEX IF NOT EXISTS idx_bills_sync_status ON bills(owner_id, business_id, sync_status)',
         );
 
         print(
@@ -435,6 +412,241 @@ class DatabaseService {
       } catch (e) {
         print('Error upgrading to enhanced unloading support: $e');
       }
+    }
+
+    // FIXED: Create outlets table if it doesn't exist (version 6)
+    if (oldVersion < 6) {
+      try {
+        // Check if outlets table exists
+        var tables = await db.query(
+          'sqlite_master',
+          where: 'type = ? AND name = ?',
+          whereArgs: ['table', 'outlets'],
+        );
+
+        if (tables.isEmpty) {
+          print('Creating missing outlets table...');
+          await db.execute('''
+            CREATE TABLE outlets (
+              id TEXT PRIMARY KEY,
+              outlet_name TEXT NOT NULL,
+              address TEXT,
+              phone TEXT,
+              latitude REAL,
+              longitude REAL,
+              owner_name TEXT,
+              outlet_type TEXT,
+              image_base64 TEXT,
+              image_path TEXT,
+              firebase_image_url TEXT,
+              owner_id TEXT NOT NULL,
+              business_id TEXT NOT NULL,
+              created_by TEXT NOT NULL,
+              route_id TEXT,
+              route_name TEXT,
+              is_active INTEGER DEFAULT 1,
+              sync_status TEXT DEFAULT 'pending',
+              created_at INTEGER,
+              updated_at INTEGER
+            )
+          ''');
+          print('Successfully created outlets table');
+        } else {
+          print('Outlets table already exists');
+        }
+
+        // Ensure sync_queue table exists
+        var syncTables = await db.query(
+          'sqlite_master',
+          where: 'type = ? AND name = ?',
+          whereArgs: ['table', 'sync_queue'],
+        );
+
+        if (syncTables.isEmpty) {
+          print('Creating missing sync_queue table...');
+          await db.execute('''
+            CREATE TABLE sync_queue (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              table_name TEXT NOT NULL,
+              record_id TEXT NOT NULL,
+              operation TEXT NOT NULL,
+              data TEXT,
+              owner_id TEXT NOT NULL,
+              business_id TEXT NOT NULL,
+              created_at INTEGER,
+              retry_count INTEGER DEFAULT 0,
+              last_retry_at INTEGER
+            )
+          ''');
+          print('Successfully created sync_queue table');
+        }
+
+        // FIXED: Handle bill_items column name mismatch
+        var billItemsTable = await db.query(
+          'sqlite_master',
+          where: 'type = ? AND name = ?',
+          whereArgs: ['table', 'bill_items'],
+        );
+
+        if (billItemsTable.isNotEmpty) {
+          // Check current bill_items table structure
+          final columns = await db.rawQuery('PRAGMA table_info(bill_items)');
+          final columnNames =
+              columns.map((col) => col['name'] as String).toSet();
+
+          // If table has product_id but not item_id, we need to rename or add the column
+          if (columnNames.contains('product_id') &&
+              !columnNames.contains('item_id')) {
+            print('Fixing bill_items table column names...');
+
+            // Create new table with correct column names
+            await db.execute('''
+              CREATE TABLE bill_items_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bill_id TEXT NOT NULL,
+                item_id TEXT NOT NULL,
+                item_name TEXT NOT NULL,
+                product_code TEXT NOT NULL,
+                quantity INTEGER NOT NULL,
+                unit_price REAL NOT NULL,
+                total_price REAL NOT NULL,
+                FOREIGN KEY (bill_id) REFERENCES bills(id)
+              )
+            ''');
+
+            // Copy data from old table to new table, mapping product_id to item_id and product_name to item_name
+            await db.execute('''
+              INSERT INTO bill_items_new (id, bill_id, item_id, item_name, product_code, quantity, unit_price, total_price)
+              SELECT id, bill_id, product_id, product_name, product_code, quantity, unit_price, total_price
+              FROM bill_items
+            ''');
+
+            // Drop old table and rename new table
+            await db.execute('DROP TABLE bill_items');
+            await db.execute('ALTER TABLE bill_items_new RENAME TO bill_items');
+
+            print('Successfully updated bill_items table structure');
+          } else if (!columnNames.contains('item_id')) {
+            // Table exists but missing item_id column - add it
+            try {
+              await db.execute(
+                'ALTER TABLE bill_items ADD COLUMN item_id TEXT',
+              );
+              print('Added item_id column to bill_items table');
+            } catch (e) {
+              print('Error adding item_id column: $e');
+            }
+          }
+
+          if (!columnNames.contains('item_name')) {
+            // Table exists but missing item_name column - add it
+            try {
+              await db.execute(
+                'ALTER TABLE bill_items ADD COLUMN item_name TEXT',
+              );
+              print('Added item_name column to bill_items table');
+            } catch (e) {
+              print('Error adding item_name column: $e');
+            }
+          }
+        }
+
+        // Create any missing indexes
+        await _createAllIndexes(db);
+      } catch (e) {
+        print('Error in version 6 upgrade: $e');
+      }
+    }
+
+    // FIXED: Recreate bill_items table with correct column names (version 7)
+    if (oldVersion < 7) {
+      try {
+        print('Recreating bill_items table with correct column names...');
+
+        // Drop and recreate bill_items table to ensure correct schema
+        await db.execute('DROP TABLE IF EXISTS bill_items');
+
+        // Create new bill_items table with correct column names
+        await db.execute('''
+          CREATE TABLE bill_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bill_id TEXT NOT NULL,
+            item_id TEXT NOT NULL,
+            item_name TEXT NOT NULL,
+            product_code TEXT NOT NULL,
+            quantity INTEGER NOT NULL,
+            unit_price REAL NOT NULL,
+            total_price REAL NOT NULL,
+            FOREIGN KEY (bill_id) REFERENCES bills(id)
+          )
+        ''');
+
+        // Create index for bill_items
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_bill_items_bill ON bill_items(bill_id)',
+        );
+
+        print('Successfully recreated bill_items table with correct schema');
+      } catch (e) {
+        print('Error recreating bill_items table: $e');
+      }
+    }
+
+    print('Database upgrade completed successfully');
+  }
+
+  Future<void> _createAllIndexes(Database db) async {
+    try {
+      // User session indexes
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_user_session_active ON user_session(is_active)',
+      );
+
+      // Loading indexes
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_loadings_sales_rep ON loadings(sales_rep_id, status)',
+      );
+
+      // Bills indexes
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_bills_outlet ON bills(outlet_id)',
+      );
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_bills_created_at ON bills(created_at)',
+      );
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_bills_business ON bills(business_id, created_by)',
+      );
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_bills_sync_status ON bills(owner_id, business_id, sync_status)',
+      );
+
+      // Bill items indexes
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_bill_items_bill ON bill_items(bill_id)',
+      );
+
+      // Outlets indexes
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_outlets_business ON outlets(business_id, is_active)',
+      );
+
+      // Sync queue indexes
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_sync_queue_status ON sync_queue(table_name, operation)',
+      );
+
+      // Unloading summaries indexes
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_unloading_summaries_rep ON unloading_summaries(sales_rep_id, unloading_date)',
+      );
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_unloading_summaries_date ON unloading_summaries(unloading_date DESC)',
+      );
+
+      print('Created all database indexes');
+    } catch (e) {
+      print('Error creating indexes: $e');
     }
   }
 
@@ -516,11 +728,7 @@ class DatabaseService {
     // Update the loading record with enhanced metadata
     await db.update(
       'loadings',
-      {
-        'items': jsonEncode(itemsList),
-        'sync_status': 'pending',
-        'last_quantity_update': DateTime.now().millisecondsSinceEpoch,
-      },
+      {'items': jsonEncode(itemsList), 'sync_status': 'pending'},
       where: 'loading_id = ?',
       whereArgs: [loadingId],
     );
@@ -984,10 +1192,26 @@ class DatabaseService {
     final db = await database;
     return await db.query(
       'outlets',
-      where: 'owner_id = ? AND business_id = ?',
+      where: 'owner_id = ? AND business_id = ? AND is_active = 1',
       whereArgs: [ownerId, businessId],
       orderBy: 'outlet_name ASC',
     );
+  }
+
+  Future<int> getOfflineOutletCount(String ownerId, String businessId) async {
+    try {
+      final db = await database;
+      final List<Map<String, dynamic>> result = await db.query(
+        'outlets',
+        columns: ['COUNT(*) as count'],
+        where: 'owner_id = ? AND business_id = ? AND sync_status = ?',
+        whereArgs: [ownerId, businessId, 'pending'],
+      );
+      return result.first['count'] as int;
+    } catch (e) {
+      print('Error getting offline outlet count: $e');
+      return 0;
+    }
   }
 
   // Database table verification and creation
@@ -1365,7 +1589,7 @@ class DatabaseService {
           'bills': pendingBills.first['count'],
           'unloadings': pendingUnloadings.first['count'],
         },
-        'version': 5,
+        'version': 7,
         'enhanced': true,
         'checkedAt': DateTime.now().toIso8601String(),
       };

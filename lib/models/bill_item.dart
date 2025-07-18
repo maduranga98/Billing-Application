@@ -1,4 +1,4 @@
-// lib/models/bill_item.dart
+// lib/models/bill_item.dart (FIXED - Remove ID from SQLite insert)
 class BillItem {
   final String id;
   final String billId;
@@ -37,7 +37,7 @@ class BillItem {
   // Factory constructor from SQLite
   factory BillItem.fromSQLite(Map<String, dynamic> data) {
     return BillItem(
-      id: data['id'] ?? '',
+      id: (data['id'] ?? 0).toString(), // Convert integer ID to string
       billId: data['bill_id'] ?? '',
       productId: data['item_id'] ?? '',
       productName: data['item_name'] ?? '',
@@ -62,10 +62,10 @@ class BillItem {
     };
   }
 
-  // Convert to SQLite format
+  // FIXED: Convert to SQLite format - Remove ID to let auto-increment work
   Map<String, dynamic> toSQLite() {
     return {
-      'id': id,
+      // 'id': id, // REMOVED: Let SQLite auto-increment handle this
       'bill_id': billId,
       'item_id': productId,
       'item_name': productName,
