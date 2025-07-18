@@ -6,6 +6,7 @@ import '../models/loading_item.dart';
 import '../models/user_session.dart';
 import '../services/loading/loading_service.dart';
 import '../services/auth/auth_service.dart';
+import '../services/local/database_service.dart'; // Add this import
 
 enum LoadingState { idle, loading, loaded, noLoading, error }
 
@@ -113,7 +114,7 @@ class LoadingProvider with ChangeNotifier {
     return 'Available';
   }
 
-  // Load today's loading for the sales rep
+  // UPDATED: Load today's loading for the sales rep with database fix
   Future<void> loadTodaysLoading(UserSession session) async {
     _loadingState = LoadingState.loading;
     _errorMessage = '';
@@ -123,6 +124,10 @@ class LoadingProvider with ChangeNotifier {
       print(
         'LoadingProvider: Loading today\'s loading for ${session.employeeId}',
       );
+
+      // ADDED: Ensure database tables exist before any operations
+      final dbService = DatabaseService();
+      await dbService.ensureBillsTableExists();
 
       final loading = await LoadingService.getTodaysLoading(session);
 
